@@ -1,0 +1,1 @@
+"""PrivacyMon FastAPI backend."""

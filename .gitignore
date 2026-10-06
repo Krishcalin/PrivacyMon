@@ -1,0 +1,41 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+env/
+
+# Test / coverage
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# Generated output
+reports/
+evidence/
+*.sqlite
+*.db
+
+# Secrets / local config
+.env
+.env.*
+!infra/.env.example
+config/settings.yaml
+
+# Node / frontend
+web/node_modules/
+web/dist/
+web/.vite/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

@@ -1,0 +1,38 @@
+# PrivacyMon runtime dependencies (API + worker).
+# The dpia_core library itself is dependency-free; these support the services
+# around it. Database drivers and NER are optional extras (see comments).
+
+# --- API / core ---
+fastapi>=0.110
+uvicorn[standard]>=0.29
+pydantic>=2.6
+python-multipart>=0.0.9
+structlog>=24.1
+
+# --- persistence / queue ---
+SQLAlchemy>=2.0
+alembic>=1.13
+psycopg[binary]>=3.1          # PostgreSQL (platform DB + target connector)
+celery>=5.3
+redis>=5.0
+
+# --- connectors ---
+GitPython>=3.1                # Git repository connector
+PyYAML>=6.0                   # detector packs, settings
+
+# --- reporting ---
+jinja2>=3.1                   # HTML report templates
+weasyprint>=61.0              # PDF rendering
+python-docx>=1.1              # DOCX reports
+
+# --- observability ---
+prometheus-client>=0.20
+
+# --- optional: additional database connectors (install as needed) ---
+# oracledb>=2.0               # Oracle
+# pyodbc>=5.1                 # MS SQL Server
+# mysqlclient>=2.2            # MySQL
+
+# --- optional: NER for Deep profile (person name / address recall) ---
+# spacy>=3.7
+# en-core-web-trf (downloaded separately)

@@ -1,0 +1,72 @@
+# PrivacyMon development stack (SRS section 12.1).
+#
+# Scaffolding: postgres, redis and minio run today. The api, worker, web and
+# sample-target services reference Dockerfiles that land with the Discovery-core
+# increment; until then, run the API directly with:
+#   python -m uvicorn api.app.main:app --reload
+#
+# Nothing here reaches external networks; data residency is on-premise (NFR-10).
+
+name: privacymon
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: privacymon
+      POSTGRES_PASSWORD: privacymon
+      POSTGRES_DB: privacymon
+    ports: ["5432:5432"]
+    volumes: ["pgdata:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U privacymon"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7
+    ports: ["6379:6379"]
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: privacymon
+      MINIO_ROOT_PASSWORD: privacymon
+    ports: ["9000:9000", "9001:9001"]
+    volumes: ["miniodata:/data"]
+
+  # --- services added with the Discovery-core increment -------------------
+  api:
+    build: { context: .., dockerfile: infra/api.Dockerfile }
+    profiles: ["full"]
+    env_file: [.env]
+    depends_on: { postgres: { condition: service_healthy }, redis: {} }
+    ports: ["8000:8000"]
+
+  worker:
+    build: { context: .., dockerfile: infra/worker.Dockerfile }
+    profiles: ["full"]
+    env_file: [.env]
+    depends_on: { postgres: { condition: service_healthy }, redis: {} }
+
+  web:
+    build: { context: ../web, dockerfile: Dockerfile }
+    profiles: ["full"]
+    ports: ["5173:5173"]
+
+  # Seeded target database with synthetic Indian PII for scanning demos.
+  sample-target:
+    image: postgres:16
+    profiles: ["full"]
+    environment:
+      POSTGRES_USER: target
+      POSTGRES_PASSWORD: target
+      POSTGRES_DB: sample_app
+    ports: ["5433:5432"]
+
+volumes:
+  pgdata:
+  miniodata:
