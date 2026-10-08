@@ -4,6 +4,7 @@ import { Applications } from "./features/Applications";
 import { ApplicationOverview } from "./features/ApplicationOverview";
 import { Findings } from "./features/Findings";
 import { DpiaRecords } from "./features/DpiaRecords";
+import { DpiaList, DpiaWorkspace } from "./features/Dpia";
 
 function Sidebar() {
   return (
@@ -32,6 +33,8 @@ export function App() {
           <Route path="/applications/:id" element={<ApplicationOverview />} />
           <Route path="/applications/:id/findings" element={<Findings />} />
           <Route path="/applications/:id/dpia" element={<DpiaRecords />} />
+          <Route path="/applications/:id/dpias" element={<DpiaList />} />
+          <Route path="/dpias/:dpiaId" element={<DpiaWorkspace />} />
         </Routes>
       </main>
     </div>

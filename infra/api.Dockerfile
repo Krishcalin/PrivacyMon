@@ -12,11 +12,18 @@ ENV PYTHONUNBUFFERED=1 \
     PYTHONPATH=/app
 WORKDIR /app
 
+# System libraries for WeasyPrint (PDF report rendering).
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libpango-1.0-0 libpangocairo-1.0-0 libcairo2 libgdk-pixbuf-2.0-0 \
+    shared-mime-info fonts-dejavu-core \
+    && rm -rf /var/lib/apt/lists/*
+
 RUN pip install --no-cache-dir \
     "fastapi>=0.110" "uvicorn[standard]>=0.29" "pydantic>=2.6" \
     "sqlalchemy[asyncio]>=2.0" "alembic>=1.13" "psycopg[binary]>=3.1" \
     "celery>=5.3" "redis>=5.0" "cryptography>=42.0" \
     "PyMySQL>=1.1" "oracledb>=2.0" "pymssql>=2.3" \
+    "weasyprint>=60" "python-docx>=1.1" \
     "structlog>=24.1" "python-multipart>=0.0.9" "GitPython>=3.1" "PyYAML>=6.0"
 
 # The engine, persistence layer, worker (connectors + pipeline) and API.

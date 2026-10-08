@@ -148,4 +148,59 @@ export const api = {
     }),
   deleteDpiaRecord: (recordId: string) =>
     http<void>(`/dpia-records/${recordId}`, { method: "DELETE" }),
+
+  // ── DPIA assessment workflow ──────────────────────────────────────────────
+  createDpia: (appId: string) =>
+    http<DpiaSummary>(`/applications/${appId}/dpias`, { method: "POST" }),
+  dpias: (appId: string) =>
+    http<{ dpias: DpiaSummary[] }>(`/applications/${appId}/dpias`),
+  dpia: (id: string) => http<DpiaDetail>(`/dpias/${id}`),
+  questionnaire: (id: string) => http<Questionnaire>(`/dpias/${id}/questionnaire`),
+  saveResponse: (id: string, qk: string, body: { answer: string; justification?: string }) =>
+    http<{ risk_band: string | null }>(`/dpias/${id}/responses/${qk}`, {
+      method: "PUT", body: JSON.stringify(body),
+    }),
+  recomputeDpia: (id: string) =>
+    http<DpiaSummary>(`/dpias/${id}/recompute`, { method: "POST" }),
+  transitionDpia: (id: string, to: string, note?: string) =>
+    http<DpiaSummary>(`/dpias/${id}/transition`, {
+      method: "POST", body: JSON.stringify({ to, note }),
+    }),
+  dpiaRisks: (id: string) => http<{ risks: RiskRow[] }>(`/dpias/${id}/risks`),
+  reportUrl: (id: string, format: "html" | "pdf" | "docx") =>
+    `${BASE}/dpias/${id}/report?format=${format}`,
 };
+
+export interface DpiaSummary {
+  id: string;
+  application_id: string;
+  state: string;
+  inherent_score: number | null;
+  residual_score: number | null;
+  risk_band: Tier | "very_high" | null;
+}
+
+export interface DpiaDetail extends DpiaSummary {
+  application_name: string | null;
+  inventory_snapshot: Record<string, { tier: string; locations_count: number }>;
+}
+
+export interface Questionnaire {
+  dpia_id: string;
+  state: string;
+  answered: number;
+  total: number;
+  sections: {
+    key: string; title: string; answered_by: string;
+    questions: {
+      key: string; text: string; guidance: string; affects_risk: boolean;
+      answer: string | null; justification: string | null;
+      suggestion: { answer: string; justification: string } | null;
+    }[];
+  }[];
+}
+
+export interface RiskRow {
+  id: string; title: string; likelihood: number; impact: number;
+  treatment: string | null; status: string;
+}

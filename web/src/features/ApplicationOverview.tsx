@@ -54,6 +54,7 @@ export function ApplicationOverview() {
         {a.internet_facing && <span className="chip gray">internet-facing</span>}
         <span className="chip gray">{a.lifecycle}</span>
         <div className="spacer" />
+        <Link className="btn" to={`/applications/${id}/dpias`}>DPIA assessment</Link>
         <Link className="btn" to={`/applications/${id}/dpia`}>DPIA records</Link>
         <Link className="btn" to={`/applications/${id}/findings`}>View findings</Link>
       </div>

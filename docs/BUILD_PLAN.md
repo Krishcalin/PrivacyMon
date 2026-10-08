@@ -12,7 +12,7 @@ findings to assess.
 | --- | --- | --- |
 | **Foundation** | SSO login; app + data source CRUD per role; migrations + CI green; Compose stack runs from a clean clone | In progress |
 | **Discovery core** | Git + PostgreSQL connectors scan the fixtures; pack precision ≥0.95 and recall ≥0.90; 500-table schema <60 min; findings explorer with filter/drawer/review; live progress | Core engine + platform DB (models, Alembic baseline, RLS) done; connectors next |
-| **DPIA workflow** | Questionnaire A–K pre-filled from inventory; risk engine matches a hand-computed case; audited transitions; PDF + DOCX report; portfolio dashboard; first DPIA published | Risk engine + controls + questionnaire done; workflow + reports next |
+| **DPIA workflow** | Questionnaire A–K pre-filled from inventory; risk engine matches a hand-computed case; audited transitions; PDF + DOCX report; portfolio dashboard; first DPIA published | **DONE** — assessment API + console workspace + PDF/DOCX/HTML report; see step 9 |
 | **Hardening** | Oracle/MSSQL/MySQL connectors; vault + row-level security; VAPT clean; UAT sign-off; Helm deploy | Not started |
 
 ## Done in the current increment
@@ -136,3 +136,25 @@ heart of Discovery core and DPIA workflow — plus a minimal Foundation API.
 - Pilot application + owner; target DB priority among Oracle/MSSQL/MySQL.
 - NER model (spaCy `en_core_web_trf` CPU vs GPU) for the Deep profile.
 - Regional name dictionaries to load; report sign-off block; findings retention.
+
+## DPIA assessment & report (option 1)
+
+**DONE.** The assessment half of the product, closing the loop from scan to signed DPIA.
+
+- **API** (`api/app/assessment.py`): create a DPIA (snapshots the current inventory),
+  the A–K questionnaire with per-question yes/partial/no/na + justification and
+  **pre-fill suggestions from the scan** (children's data, plain high/critical, user
+  base, hosting, critical categories), save responses, **recompute** inherent/residual
+  risk from the inventory snapshot + answers (reusing `dpia_core.risk`) and rebuild the
+  auto gap-derived **risk register**, audited **workflow transitions** (Draft →
+  Submitted → Under review → Changes requested → Approved → Published), and comments.
+- **Report** (`api/app/report.py`): a DPIA as **HTML** (pure Python), **PDF**
+  (WeasyPrint) and **Word** (python-docx) — application, inventory, risk, register,
+  the full A–K answers and a sign-off block. HTML always available; PDF/DOCX libraries
+  are imported lazily (and installed in the API image with WeasyPrint's system libs).
+- **Console**: a DPIA list per application and a workspace (`web/src/features/Dpia.tsx`)
+  with the risk KPIs, the workflow buttons, the risk register, the A–K questionnaire
+  with apply-suggestion, and HTML/PDF/DOCX download — linked from the overview.
+
+Validated live end to end: create → answer D/E/H/J → recompute (band + 6 gap risks) →
+transition to Published → download a valid PDF/DOCX/HTML, all through the console proxy.

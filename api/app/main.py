@@ -15,7 +15,7 @@ from dpia_core.controls import CONTROL_LIBRARY, QUESTIONNAIRE
 from dpia_core.detectors import DEFAULT_PACK_VERSION, default_detectors
 from dpia_core.engine import evaluate_column, visible_findings
 
-from . import console, db, dpia, scans
+from . import assessment, console, db, dpia, report, scans
 from .settings import settings
 
 app = FastAPI(
@@ -33,6 +33,9 @@ app.include_router(scans.router)
 app.include_router(console.router)
 # DPIA processing-record endpoints (the 30-field DPDP sheet).
 app.include_router(dpia.router)
+# DPIA assessment workflow + report (SRS 3.6 / 5 / 9).
+app.include_router(assessment.router)
+app.include_router(report.router)
 
 
 @app.get(f"{P}/healthz")
