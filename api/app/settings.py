@@ -20,6 +20,10 @@ class Settings:
     database_url: str = os.getenv(
         "PRIVACYMON_DB_URL",
         "postgresql+psycopg://privacymon:privacymon@localhost:5432/privacymon")
+    # How a started scan is executed: "celery" hands it to the background worker via
+    # Redis; "inline" runs the pipeline in the request (dev / no broker).
+    scan_mode: str = os.getenv("PRIVACYMON_SCAN_MODE", "inline")
+    broker_url: str = os.getenv("PRIVACYMON_BROKER_URL", "redis://localhost:6379/0")
     # Confidence thresholds (SRS 4.4); overridable per deployment.
     likely_threshold: float = float(os.getenv("PRIVACYMON_LIKELY", "0.80"))
     review_threshold: float = float(os.getenv("PRIVACYMON_REVIEW", "0.50"))

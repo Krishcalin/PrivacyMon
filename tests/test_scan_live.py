@@ -106,3 +106,86 @@ def test_postgres_connector_scans_a_target_schema_read_only():
         with psycopg.connect(DSN) as conn:
             conn.autocommit = True
             conn.execute("DROP SCHEMA IF EXISTS pii_live_test CASCADE")
+
+
+def test_pipeline_does_not_run_a_cancelled_job():
+    # A job cancelled before the worker starts stays cancelled with no findings.
+    from dpia_core.models import ScanProfile
+    from platform_db.enums import (DataSourceKind, Environment, Hosting, Lifecycle,
+                                   ScanState)
+    from platform_db.models.registry import Application, DataSource
+    from platform_db.models.scanning import ScanJob
+    from platform_db.session import make_sync_engine, make_sync_sessionmaker
+    from worker.connectors.git import GitConnector
+    from worker.pipeline import run_job
+
+    engine = make_sync_engine(DSN)
+    Session = make_sync_sessionmaker(engine)
+    app_id, ds_id = uuid.uuid4(), uuid.uuid4()
+    job_id = None
+    with Session() as s:
+        s.add(Application(id=app_id, name="Cancel Test", environment=Environment.DEV,
+                          hosting=Hosting.CLOUD, internet_facing=False,
+                          lifecycle=Lifecycle.ACTIVE, tags=[]))
+        s.add(DataSource(id=ds_id, application_id=app_id, kind=DataSourceKind.GIT,
+                         display_name="repo", connection={"path": FIXTURE_REPO}))
+        s.commit()                                   # parents first (no ORM relationship)
+    with Session() as s:
+        job = ScanJob(data_source_id=ds_id, application_id=app_id,
+                      profile=ScanProfile.STANDARD, state=ScanState.CANCELLED)
+        s.add(job)
+        s.commit()
+        job_id = job.id
+    try:
+        with Session() as s:
+            summary = run_job(s, job_id, GitConnector(FIXTURE_REPO))
+        assert summary["state"] == "cancelled" and summary["findings"] == 0
+        with Session() as s:
+            n = s.execute(text("SELECT count(*) FROM findings WHERE application_id=:a"),
+                          {"a": str(app_id)}).scalar()
+        assert n == 0
+    finally:
+        _cleanup(engine, app_id, str(job_id) if job_id else None)
+
+
+def test_pipeline_resume_skips_completed_units():
+    # Resuming a job re-runs no completed unit, so findings are not duplicated.
+    from dpia_core.models import ScanProfile
+    from platform_db.enums import (DataSourceKind, Environment, Hosting, Lifecycle,
+                                   ScanState)
+    from platform_db.models.registry import Application, DataSource
+    from platform_db.models.scanning import ScanJob
+    from platform_db.session import make_sync_engine, make_sync_sessionmaker
+    from worker.connectors.git import GitConnector
+    from worker.pipeline import run_job, run_scan
+
+    engine = make_sync_engine(DSN)
+    Session = make_sync_sessionmaker(engine)
+    app_id, ds_id = uuid.uuid4(), uuid.uuid4()
+    job_id = None
+    with Session() as s:
+        s.add(Application(id=app_id, name="Resume Test", environment=Environment.DEV,
+                          hosting=Hosting.CLOUD, internet_facing=False,
+                          lifecycle=Lifecycle.ACTIVE, tags=[]))
+        s.add(DataSource(id=ds_id, application_id=app_id, kind=DataSourceKind.GIT,
+                         display_name="repo", connection={"path": FIXTURE_REPO}))
+        s.commit()
+    try:
+        with Session() as s:
+            first = run_scan(s, application_id=app_id, data_source_id=ds_id,
+                             connector=GitConnector(FIXTURE_REPO),
+                             profile=ScanProfile.STANDARD)
+            job_id = uuid.UUID(first["job_id"])
+        n_after_first = first["findings"]
+        # Simulate a resume: put the completed job back to QUEUED and run it again.
+        with Session() as s:
+            s.get(ScanJob, job_id).state = ScanState.QUEUED
+            s.commit()
+        with Session() as s:
+            run_job(s, job_id, GitConnector(FIXTURE_REPO))
+        with Session() as s:
+            n = s.execute(text("SELECT count(*) FROM findings WHERE scan_job_id=:j"),
+                          {"j": str(job_id)}).scalar()
+        assert n == n_after_first, "resume duplicated findings"
+    finally:
+        _cleanup(engine, app_id, str(job_id) if job_id else None)

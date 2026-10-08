@@ -70,22 +70,29 @@ heart of Discovery core and DPIA workflow — plus a minimal Foundation API.
    and runs `evaluate_column` per column (value + name); `table_grants` for FR-2.5.
    Detection logic separated as `_rows_to_findings` (6 DB-free unit tests) with a live
    integration test gated on a target DSN.
-4. **Scan pipeline DONE (Celery/SSE pending)** — `worker/pipeline.py` `run_scan`
-   persists a connector's findings into a per-job `findings` partition, rebuilds the
-   `inventory` (upsert preserving owner annotations) and computes inherent risk, all
-   in one transaction, writing as the trusted owner role. Validated live against the
-   Docker Postgres. Still to do: the Celery+Redis task wrapper and SSE progress
-   (`worker.tasks` stub point noted) so scans run in a background worker, not in-process.
+4. ~~Celery + Redis scan pipeline (SRS 7.2) with SSE progress; inventory rebuild +
+   inherent risk at scan end.~~ **DONE** — `worker/pipeline.py` `run_job` persists a
+   connector's findings into a per-job `findings` partition, commits progress per unit,
+   rebuilds the `inventory` (upsert preserving owner annotations) and computes inherent
+   risk, writing as the trusted owner role. A Celery app (`worker/celery_app.py`) +
+   task (`worker/tasks.py`) over Redis run scans in the background; the API
+   (`api/app/scans.py`) starts a scan (`POST /data-sources/{id}/scans`), reports status
+   (`GET /scans/{id}`), streams progress (`GET /scans/{id}/events`, SSE), and
+   pause/resume/cancel flip the job state the worker reads between units (resume skips
+   completed units, never double-writing). Validated live end to end through the
+   worker: Git scan 38 findings, sample-target Postgres scan 13.
 5. React SPA shell: portfolio dashboard, application registry, findings explorer
-   with the review actions (SRS section 10). **Not started.**
+   with the review actions (SRS section 10). **Not started** — the one remaining
+   Discovery-core item.
 6. ~~docker-compose dev stack wired end to end with a seeded sample target DB.~~
-   **DONE (app + db)** — `infra/api.Dockerfile` + `infra/.env(.example)`; `docker
-   compose --profile full up postgres api` brings up the platform DB and the API,
-   which migrates on start and serves DB-backed `/readyz` and `/applications`. The RLS
-   isolation, the append-only audit trigger and the `findings` partition were verified
-   against the live database (a non-superuser `privacymon_app` role is required for RLS
-   to apply — a superuser bypasses it). The worker container and seeded sample-target
-   land with the Celery slice.
+   **DONE** — `infra/api.Dockerfile` + `infra/worker.Dockerfile` + `infra/.env(.example)`;
+   `docker compose -f infra/docker-compose.yml --profile full up` brings up Postgres,
+   Redis, the API (migrates on start), the Celery worker, and a seeded `sample-target`
+   Postgres (`infra/sample-target-init.sql`). The RLS isolation, the append-only audit
+   trigger and the `findings` partition were verified against the live database (a
+   non-superuser `privacymon_app` role, provisioned by `infra/init-db.sql`, is required
+   for RLS to apply — a superuser bypasses it). Both images set `PYTHONPATH=/app` so
+   Celery's pool workers resolve the packages.
 
 ## Open items carried from SRS section 14 (decide before/with Foundation)
 

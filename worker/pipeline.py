@@ -1,14 +1,17 @@
-"""Scan pipeline (SRS 3.3 / 7.2): run a connector and persist its findings.
+"""Scan pipeline (SRS 3.3 / 7.2): run a connector and persist its findings, with
+live progress and pause/resume/cancel.
 
 The worker is the TRUSTED writer — it connects as the database owner, so it may
 create a per-job ``findings`` partition and write rows for whichever application it
 was asked to scan. Row-level security protects the READ path (the API, as a scoped
-role); it is not the worker's job to enforce it, so the worker is not subject to it.
+role); the worker is deliberately not subject to it.
 
-A scan: open a job → create its findings partition → enumerate units → scan each
-into ``dpia_core`` findings → persist → rebuild the inventory → compute inherent risk
-→ close the job. Synchronous and transaction-safe so it runs the same way under a
-Celery task or a direct call; the Celery wrapper lives in ``worker.tasks``.
+Progress is committed per unit (``units_done`` / ``findings_count`` and each
+``scan_units`` row), so the SSE endpoint can stream real progress and a paused or
+cancelled scan keeps its partial results (SRS FR-3.3 / FR-3.6). Control is a
+re-read of ``scan_jobs.state`` between units: the API sets ``paused`` or ``cancelled``
+and the worker stops at the next boundary; a resumed job skips the units it already
+finished, so resuming never double-writes.
 """
 from __future__ import annotations
 
@@ -17,7 +20,7 @@ import uuid
 from collections import defaultdict
 from typing import Any
 
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
@@ -30,6 +33,7 @@ from platform_db.models.scanning import Inventory, ScanJob, ScanUnit
 from worker.connectors.base import Connector
 
 _TIER_RANK = {Tier.LOW: 0, Tier.MEDIUM: 1, Tier.HIGH: 2, Tier.CRITICAL: 3}
+_STOP_STATES = {ScanState.PAUSED, ScanState.CANCELLED}
 
 
 def _partition_name(job_id: uuid.UUID) -> str:
@@ -46,24 +50,62 @@ def run_scan(
     triggered_by: uuid.UUID | None = None,
     now=None,
 ) -> dict[str, Any]:
-    """Run ``connector`` and persist a complete scan for one data source."""
-    clock = now or (lambda: int(time.time()))
+    """Create a job and run it to completion — the direct/synchronous entry point."""
     job = ScanJob(
         data_source_id=data_source_id, application_id=application_id,
-        profile=profile, state=ScanState.RUNNING, triggered_by=triggered_by)
+        profile=profile, state=ScanState.QUEUED, triggered_by=triggered_by)
     session.add(job)
-    session.flush()                      # assign job.id before we partition/insert on it
+    session.commit()
+    return run_job(session, job.id, connector, now=now)
 
-    # One partition per job (SRS 8.2): a retention sweep later DETACHES it instead of
-    # deleting millions of rows. Created by the owner connection the worker holds.
+
+def run_job(session: Session, job_id: uuid.UUID, connector: Connector, *, now=None
+            ) -> dict[str, Any]:
+    """Run (or resume) an already-created job by id. Idempotent to resume."""
+    clock = now or (lambda: int(time.time()))
+    job = session.get(ScanJob, job_id)
+    if job is None:
+        raise ValueError(f"scan job {job_id} not found")
+    # Do not (re)start a job that is already cancelled or finished — e.g. the API
+    # cancelled it while it sat queued. A resume sets the job back to QUEUED first, so
+    # a genuine resume never lands here.
+    if job.state in (ScanState.CANCELLED, ScanState.COMPLETED, ScanState.FAILED):
+        return _summary(job_id, job.state.value, job.units_done or 0,
+                        job.findings_count or 0, inventory={}, risk=None)
+    application_id = job.application_id
+    data_source_id = job.data_source_id
+
+    job.state = ScanState.RUNNING
+    if job.started_at is None:
+        job.started_at = text("now()")
     session.execute(text(
         f'CREATE TABLE IF NOT EXISTS "{_partition_name(job.id)}" '
         f"PARTITION OF findings FOR VALUES IN ('{job.id}')"))
+    session.commit()
 
-    units_total = 0
-    findings_total = 0
-    for unit in connector.enumerate():
-        units_total += 1
+    # Resume support: units already completed in a prior run are skipped, so a
+    # resumed scan never re-writes their findings (SRS FR-3.6, "partial results kept").
+    done = {loc for (loc,) in session.execute(
+        select(ScanUnit.locator).where(
+            ScanUnit.scan_job_id == job.id,
+            ScanUnit.state == ScanState.COMPLETED)).all()}
+
+    units = list(connector.enumerate())
+    job.units_total = len(units)
+    session.commit()
+
+    units_done = len(done)
+    findings_total = job.findings_count or 0
+    stopped_state: ScanState | None = None
+
+    for unit in units:
+        current = session.execute(
+            select(ScanJob.state).where(ScanJob.id == job.id)).scalar()
+        if current in _STOP_STATES:                  # API requested pause/cancel
+            stopped_state = current
+            break
+        if unit.key in done:
+            continue
         started = clock()
         su = ScanUnit(scan_job_id=job.id, kind=unit.kind, locator=unit.key,
                       state=ScanState.RUNNING)
@@ -79,27 +121,35 @@ def run_scan(
                 locator=f.locator.as_dict(), protection_state=f.protection_state,
                 combined_identity=f.combined_identity, evidence=list(f.evidence)[:3],
                 pack_version=f.pack_version or None))
-        findings_total += len(findings)
         su.state = ScanState.COMPLETED
-        su.rows_sampled = 0
         su.duration_ms = max(0, (clock() - started) * 1000)
+        units_done += 1
+        findings_total += len(findings)
+        job.units_done = units_done
+        job.findings_count = findings_total
+        session.commit()                             # progress visible + partial kept
 
-    session.flush()
+    if stopped_state is not None:
+        if stopped_state == ScanState.CANCELLED:
+            job.finished_at = text("now()")
+            session.commit()
+        return _summary(job_id, stopped_state.value, units_done, findings_total,
+                        inventory={}, risk=None)
+
     inventory = _rebuild_inventory(session, application_id, job.id)
     risk = _inherent_risk(session, application_id, inventory)
-
     job.state = ScanState.COMPLETED
-    job.units_total = units_total
-    job.units_done = units_total
+    job.units_done = units_done
     job.findings_count = findings_total
     job.finished_at = text("now()")
     session.commit()
+    return _summary(job_id, ScanState.COMPLETED.value, units_done, findings_total,
+                    inventory=inventory, risk=risk)
 
+
+def _summary(job_id, state, units, findings, *, inventory, risk) -> dict[str, Any]:
     return {
-        "job_id": str(job.id),
-        "state": job.state.value,
-        "units": units_total,
-        "findings": findings_total,
+        "job_id": str(job_id), "state": state, "units": units, "findings": findings,
         "inventory": {c: v["locations_count"] for c, v in inventory.items()},
         "inherent_risk": risk,
     }

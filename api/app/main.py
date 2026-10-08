@@ -15,7 +15,7 @@ from dpia_core.controls import CONTROL_LIBRARY, QUESTIONNAIRE
 from dpia_core.detectors import DEFAULT_PACK_VERSION, default_detectors
 from dpia_core.engine import evaluate_column, visible_findings
 
-from . import db
+from . import db, scans
 from .settings import settings
 
 app = FastAPI(
@@ -26,6 +26,9 @@ app = FastAPI(
 )
 
 P = settings.api_prefix
+
+# Scan control + progress endpoints (SRS 9): start, status, pause/resume/cancel, SSE.
+app.include_router(scans.router)
 
 
 @app.get(f"{P}/healthz")

@@ -68,7 +68,9 @@ services:
       POSTGRES_USER: target
       POSTGRES_PASSWORD: target
       POSTGRES_DB: sample_app
-    ports: ["5433:5432"]
+    ports: ["127.0.0.1:5433:5432"]
+    volumes:
+      - "./sample-target-init.sql:/docker-entrypoint-initdb.d/init.sql:ro"
 
 volumes:
   pgdata:
