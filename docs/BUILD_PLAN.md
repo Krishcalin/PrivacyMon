@@ -55,8 +55,14 @@ heart of Discovery core and DPIA workflow — plus a minimal Foundation API.
    application-scoped tables keyed on two session GUCs; and the append-only
    `audit_log` trigger. Async psycopg 3 session + `set_rls_context` helper. 16 tests
    (structural — no live PostgreSQL in the dev environment).
-2. Git connector (`worker/connectors/git.py`): clone/pull, ignore rules, parse
-   identifiers + string literals for Python/Java/C#/JS/TS/SQL via `evaluate_text`.
+2. ~~Git connector (`worker/connectors/git.py`): clone/pull, ignore rules, parse
+   identifiers + string literals for Python/Java/C#/JS/TS/SQL via `evaluate_text`.~~
+   **DONE** — `worker/connectors/`: an SDK contract (`test`/`enumerate`/`scan_unit`,
+   FR-2.9), platform + `.gitignore` ignore rules (`ignore.py`), and `GitConnector`
+   that scans a working tree two ways — string-literal/comment **values** line by line
+   via `evaluate_text`, and **identifiers** via the engine's schema-only path — then
+   raises combined-identity records per file. Clone/pull is an injected step (no
+   GitPython needed to scan an existing checkout). 12 tests over `fixtures/repo`.
 3. PostgreSQL connector: read-only enumerate schemas/tables/columns + capped
    row sampling → `evaluate_column`; grants capture.
 4. Celery + Redis scan pipeline (SRS 7.2) with SSE progress; `scan_jobs` /

@@ -41,6 +41,7 @@ dev = [
 packages = [
     "dpia_core", "dpia_core.detectors",
     "platform_db", "platform_db.models",
+    "worker", "worker.connectors",
     "api", "api.app",
 ]
 
