@@ -5,6 +5,7 @@ import { ApplicationOverview } from "./features/ApplicationOverview";
 import { Findings } from "./features/Findings";
 import { DpiaRecords } from "./features/DpiaRecords";
 import { DpiaList, DpiaWorkspace } from "./features/Dpia";
+import { Inventory } from "./features/Inventory";
 import { Users } from "./features/Users";
 import { Login } from "./features/Login";
 import { useAuth } from "./lib/auth";
@@ -71,6 +72,7 @@ export function App() {
           <Route path="/applications" element={<Applications />} />
           <Route path="/applications/:id" element={<ApplicationOverview />} />
           <Route path="/applications/:id/findings" element={<Findings />} />
+          <Route path="/applications/:id/inventory" element={<Inventory />} />
           <Route path="/applications/:id/dpia" element={<DpiaRecords />} />
           <Route path="/applications/:id/dpias" element={<DpiaList />} />
           <Route path="/dpias/:dpiaId" element={<DpiaWorkspace />} />

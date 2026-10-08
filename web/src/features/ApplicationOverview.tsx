@@ -56,6 +56,7 @@ export function ApplicationOverview() {
         <div className="spacer" />
         <Link className="btn" to={`/applications/${id}/dpias`}>DPIA assessment</Link>
         <Link className="btn" to={`/applications/${id}/dpia`}>DPIA records</Link>
+        <Link className="btn" to={`/applications/${id}/inventory`}>Data inventory</Link>
         <Link className="btn" to={`/applications/${id}/findings`}>View findings</Link>
       </div>
 

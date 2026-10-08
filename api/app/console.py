@@ -11,17 +11,20 @@ import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 
 from platform_db import crypto
 from platform_db.enums import (
     DataSourceKind, Environment, Hosting, Lifecycle, Role, ScanProfile, UserBase,
 )
+from platform_db.enums import Category, ReviewState
 from platform_db.models.platform_tables import UserRole
 from platform_db.models.registry import Application, DataSource
-from platform_db.models.scanning import Finding, Inventory, ScanJob
+from platform_db.models.scanning import (
+    Finding, Inventory, ScanJob, Suppression,
+)
 
-from . import db
+from . import audit, db
 from .auth import Principal, current_user
 from .settings import settings
 
@@ -296,8 +299,204 @@ def get_inventory(application_id: uuid.UUID,
             "locations_count": i.locations_count, "rows_estimate": i.rows_estimate,
             "protection_state_summary": i.protection_state_summary or {},
             "purpose": i.purpose, "source_of_data": i.source_of_data,
-            "recipients": i.recipients,
+            "recipients": i.recipients, "retention": i.retention,
         } for i in rows]}
+
+
+# ── findings review workflow (FR-4.6) ────────────────────────────────────────
+_REVIEW_ACTIONS = {"confirm", "false_positive", "reclassify", "suppress"}
+
+
+class ReviewAction(BaseModel):
+    """A reviewer's verdict on a finding (SRS FR-4.6)."""
+
+    action: str                              # confirm|false_positive|reclassify|suppress
+    new_category: Category | None = None     # required when action == reclassify
+    reason: str | None = None                # suppression reason / note
+    suppress_scope: str = "column"           # column|table|path — granularity of a suppression
+
+
+class BulkReview(ReviewAction):
+    finding_ids: list[uuid.UUID] = Field(..., min_length=1, max_length=1000)
+
+
+def _suppression_match(locator: dict, scope: str) -> dict:
+    """The locator subset a suppression keys on, at the chosen granularity. A finding
+    is suppressed when its locator CONTAINS this subset (and the category matches).
+
+    The scope is interpreted against the locator shape: a database finding keys on
+    schema/table/column, a file finding on path/line. ``table``/``path`` scope means
+    the whole container (table, or file path). Null components are dropped, and the
+    match NEVER comes back empty (an empty match would suppress everything) — it falls
+    back to the exact location."""
+    is_file = locator.get("path") is not None
+    if scope == "path":
+        keys = ("path",) if is_file else ("schema", "table")
+    elif scope == "table":
+        keys = ("path",) if is_file else ("schema", "table")
+    else:  # exact location (default)
+        keys = ("path", "line") if is_file else ("schema", "table", "column")
+    match = {k: locator[k] for k in keys if locator.get(k) is not None}
+    if not match:  # never suppress everything by accident
+        exact = ("path", "line") if is_file else ("schema", "table", "column")
+        match = {k: locator[k] for k in exact if locator.get(k) is not None}
+    return match
+
+
+def _matches(locator: dict, locator_match: dict) -> bool:
+    """True when every key/value in ``locator_match`` is present in ``locator``."""
+    return all(locator.get(k) == v for k, v in (locator_match or {}).items())
+
+
+def _apply_review(s, user: Principal, finding: Finding, body: ReviewAction) -> dict:
+    """Mutate one finding per the reviewer's action; create a suppression when asked.
+    Returns the serialised new state. Caller owns the transaction + audit."""
+    before = {"review_state": finding.review_state.value,
+              "category": finding.category.value}
+    finding.reviewed_by = user.user_id
+    finding.reviewed_at = text("now()")
+    if body.action == "confirm":
+        finding.review_state = ReviewState.CONFIRMED
+    elif body.action == "false_positive":
+        finding.review_state = ReviewState.FALSE_POSITIVE
+    elif body.action == "reclassify":
+        if body.new_category is None:
+            raise HTTPException(status_code=400, detail="reclassify requires new_category")
+        finding.review_state = ReviewState.RECLASSIFIED
+        finding.category = body.new_category
+    elif body.action == "suppress":
+        finding.review_state = ReviewState.SUPPRESSED
+        sup = Suppression(
+            application_id=finding.application_id,
+            locator_match=_suppression_match(finding.locator or {}, body.suppress_scope),
+            category=finding.category, reason=body.reason, created_by=user.user_id)
+        s.add(sup)
+        s.flush()
+        finding.suppression_id = sup.id
+    else:
+        raise HTTPException(status_code=400,
+                            detail=f"action must be one of {sorted(_REVIEW_ACTIONS)}")
+    after = {"review_state": finding.review_state.value,
+             "category": finding.category.value}
+    audit.record(s, actor_id=user.user_id, action=f"finding.{body.action}",
+                 object_type="finding", object_id=str(finding.id),
+                 before=before, after=after)
+    return after
+
+
+@router.post("/findings/{finding_id}/review")
+def review_finding(finding_id: uuid.UUID, body: ReviewAction,
+                   user: Principal = Depends(current_user)) -> dict:
+    with db.get_sessionmaker()() as s:
+        finding = s.query(Finding).filter(Finding.id == finding_id).first()
+        if finding is None:
+            raise HTTPException(status_code=404, detail="finding not found")
+        _assert_access(user, finding.application_id)
+        after = _apply_review(s, user, finding, body)
+        s.commit()
+        return {"id": str(finding_id), **after}
+
+
+@router.post("/applications/{application_id}/findings/review")
+def review_findings_bulk(application_id: uuid.UUID, body: BulkReview,
+                         user: Principal = Depends(current_user)) -> dict:
+    _assert_access(user, application_id)
+    with db.get_sessionmaker()() as s:
+        rows = s.query(Finding).filter(
+            Finding.application_id == application_id,
+            Finding.id.in_(body.finding_ids)).all()
+        for f in rows:
+            _apply_review(s, user, f, body)
+        s.commit()
+        return {"reviewed": len(rows), "action": body.action}
+
+
+# ── suppressions (persist across scans) ──────────────────────────────────────
+class CreateSuppression(BaseModel):
+    locator_match: dict = Field(default_factory=dict)
+    category: Category | None = None
+    reason: str | None = None
+
+
+@router.get("/applications/{application_id}/suppressions")
+def list_suppressions(application_id: uuid.UUID,
+                      user: Principal = Depends(current_user)) -> dict:
+    with db.scoped_session(user) as s:
+        rows = s.query(Suppression).filter(
+            Suppression.application_id == application_id).order_by(
+            Suppression.created_at.desc()).all()
+        return {"count": len(rows), "suppressions": [{
+            "id": str(x.id), "locator_match": x.locator_match,
+            "category": x.category.value if x.category else None,
+            "reason": x.reason,
+            "created_at": x.created_at.isoformat() if x.created_at else None,
+        } for x in rows]}
+
+
+@router.post("/applications/{application_id}/suppressions", status_code=201)
+def create_suppression(application_id: uuid.UUID, body: CreateSuppression,
+                       user: Principal = Depends(current_user)) -> dict:
+    _assert_access(user, application_id)
+    with db.get_sessionmaker()() as s:
+        sup = Suppression(application_id=application_id, locator_match=body.locator_match,
+                          category=body.category, reason=body.reason,
+                          created_by=user.user_id)
+        s.add(sup)
+        s.flush()
+        audit.record(s, actor_id=user.user_id, action="suppression.create",
+                     object_type="suppression", object_id=str(sup.id),
+                     after={"locator_match": body.locator_match,
+                            "category": body.category.value if body.category else None})
+        s.commit()
+        return {"id": str(sup.id)}
+
+
+@router.delete("/suppressions/{suppression_id}", status_code=204)
+def delete_suppression(suppression_id: uuid.UUID,
+                       user: Principal = Depends(current_user)) -> None:
+    with db.get_sessionmaker()() as s:
+        sup = s.get(Suppression, suppression_id)
+        if sup is None:
+            raise HTTPException(status_code=404, detail="suppression not found")
+        _assert_access(user, sup.application_id)
+        audit.record(s, actor_id=user.user_id, action="suppression.delete",
+                     object_type="suppression", object_id=str(sup.id),
+                     before={"locator_match": sup.locator_match})
+        s.delete(sup)
+        s.commit()
+
+
+# ── editable data-inventory matrix (purpose/source/recipients/retention) ──────
+class InventoryEdit(BaseModel):
+    purpose: str | None = None
+    source_of_data: str | None = None
+    recipients: str | None = None
+    retention: str | None = None
+
+
+@router.put("/applications/{application_id}/inventory/{category}")
+def edit_inventory(application_id: uuid.UUID, category: str, body: InventoryEdit,
+                   user: Principal = Depends(current_user)) -> dict:
+    _assert_access(user, application_id)
+    with db.get_sessionmaker()() as s:
+        row = s.query(Inventory).filter(
+            Inventory.application_id == application_id,
+            Inventory.category == category).first()
+        if row is None:
+            raise HTTPException(status_code=404, detail="inventory row not found")
+        before = {"purpose": row.purpose, "source_of_data": row.source_of_data,
+                  "recipients": row.recipients, "retention": row.retention}
+        row.purpose = body.purpose
+        row.source_of_data = body.source_of_data
+        row.recipients = body.recipients
+        row.retention = body.retention
+        after = {"purpose": row.purpose, "source_of_data": row.source_of_data,
+                 "recipients": row.recipients, "retention": row.retention}
+        audit.record(s, actor_id=user.user_id, action="inventory.update",
+                     object_type="inventory", object_id=f"{application_id}/{category}",
+                     before=before, after=after)
+        s.commit()
+        return {"category": category, **after}
 
 
 # ── portfolio dashboard ──────────────────────────────────────────────────────

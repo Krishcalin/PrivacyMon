@@ -162,11 +162,15 @@ class Suppression(UUIDPKMixin, TimestampMixin, Base):
     reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     expires_at: Mapped[DateTime | None] = mapped_column(
         DateTime(timezone=True), nullable=True)
+    created_by: Mapped[uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True)
 
 
 class Inventory(UUIDPKMixin, TimestampMixin, Base):
     """One row per application × category, rebuilt at scan end; owner-annotated
-    columns (purpose, source_of_data, recipients) are preserved across rebuilds."""
+    columns (purpose, source_of_data, recipients, retention) are preserved across
+    rebuilds."""
 
     __tablename__ = "inventory"
     __table_args__ = (
@@ -188,5 +192,6 @@ class Inventory(UUIDPKMixin, TimestampMixin, Base):
     purpose: Mapped[str | None] = mapped_column(Text, nullable=True)
     source_of_data: Mapped[str | None] = mapped_column(Text, nullable=True)
     recipients: Mapped[str | None] = mapped_column(Text, nullable=True)
+    retention: Mapped[str | None] = mapped_column(Text, nullable=True)
     computed_at: Mapped[DateTime | None] = mapped_column(
         DateTime(timezone=True), nullable=True)

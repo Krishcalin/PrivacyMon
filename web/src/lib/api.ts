@@ -107,6 +107,31 @@ export interface InventoryRow {
   purpose?: string | null;
   source_of_data?: string | null;
   recipients?: string | null;
+  retention?: string | null;
+}
+
+export type ReviewActionKind = "confirm" | "false_positive" | "reclassify" | "suppress";
+
+export interface ReviewBody {
+  action: ReviewActionKind;
+  new_category?: string;
+  reason?: string;
+  suppress_scope?: "column" | "table" | "path";
+}
+
+export interface Suppression {
+  id: string;
+  locator_match: Record<string, unknown>;
+  category: string | null;
+  reason: string | null;
+  created_at: string | null;
+}
+
+export interface InventoryEditBody {
+  purpose?: string | null;
+  source_of_data?: string | null;
+  recipients?: string | null;
+  retention?: string | null;
 }
 
 export interface Portfolio {
@@ -161,8 +186,22 @@ export const api = {
     }),
   findings: (id: string, qs = "") =>
     http<{ total: number; findings: Finding[] }>(`/applications/${id}/findings${qs}`),
+  reviewFinding: (findingId: string, body: ReviewBody) =>
+    http<{ id: string; review_state: string; category: string }>(
+      `/findings/${findingId}/review`, { method: "POST", body: JSON.stringify(body) }),
+  reviewFindingsBulk: (id: string, body: ReviewBody & { finding_ids: string[] }) =>
+    http<{ reviewed: number; action: string }>(
+      `/applications/${id}/findings/review`, { method: "POST", body: JSON.stringify(body) }),
+  suppressions: (id: string) =>
+    http<{ count: number; suppressions: Suppression[] }>(`/applications/${id}/suppressions`),
+  deleteSuppression: (suppressionId: string) =>
+    http<void>(`/suppressions/${suppressionId}`, { method: "DELETE" }),
   inventory: (id: string) =>
     http<{ inventory: InventoryRow[] }>(`/applications/${id}/inventory`),
+  editInventory: (id: string, category: string, body: InventoryEditBody) =>
+    http<InventoryRow>(`/applications/${id}/inventory/${category}`, {
+      method: "PUT", body: JSON.stringify(body),
+    }),
   startScan: (dataSourceId: string) =>
     http<{ job_id: string; state: string }>(`/data-sources/${dataSourceId}/scans`, {
       method: "POST",

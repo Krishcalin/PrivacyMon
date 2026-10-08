@@ -26,10 +26,10 @@ from sqlalchemy.orm import Session
 
 from dpia_core import risk as risk_engine
 from dpia_core.models import ScanProfile, Tier
-from platform_db.enums import ScanState
+from platform_db.enums import ReviewState, ScanState
 from platform_db.models.registry import Application
 from platform_db.models.scanning import Finding as FindingRow
-from platform_db.models.scanning import Inventory, ScanJob, ScanUnit
+from platform_db.models.scanning import Inventory, ScanJob, ScanUnit, Suppression
 from worker.connectors.base import Connector
 
 _TIER_RANK = {Tier.LOW: 0, Tier.MEDIUM: 1, Tier.HIGH: 2, Tier.CRITICAL: 3}
@@ -38,6 +38,32 @@ _STOP_STATES = {ScanState.PAUSED, ScanState.CANCELLED}
 
 def _partition_name(job_id: uuid.UUID) -> str:
     return f"findings_p_{job_id.hex}"
+
+
+def _load_suppressions(session: Session, application_id: uuid.UUID) -> list[Suppression]:
+    """Active (non-expired) suppressions for an application — loaded once per scan so a
+    reviewer's suppression persists across future scans (SRS FR-4.6)."""
+    rows = session.execute(
+        select(Suppression).where(Suppression.application_id == application_id)).scalars().all()
+    now = time.time()
+    active = []
+    for s in rows:
+        if s.expires_at is not None and s.expires_at.timestamp() <= now:
+            continue
+        active.append(s)
+    return active
+
+
+def _suppressed_by(locator: dict, category, suppressions: list[Suppression]):
+    """Return the first suppression whose locator subset is contained in ``locator`` and
+    whose category matches (or is unset, meaning any category at that locator)."""
+    for s in suppressions:
+        if s.category is not None and s.category != category:
+            continue
+        match = s.locator_match or {}
+        if all(locator.get(k) == v for k, v in match.items()):
+            return s
+    return None
 
 
 def run_scan(
@@ -94,6 +120,10 @@ def run_job(session: Session, job_id: uuid.UUID, connector: Connector, *, now=No
     job.units_total = len(units)
     session.commit()
 
+    # Load active suppressions once; a matching finding is written already suppressed,
+    # so a reviewer's decision carries across every future scan (SRS FR-4.6).
+    suppressions = _load_suppressions(session, application_id)
+
     units_done = len(done)
     findings_total = job.findings_count or 0
     stopped_state: ScanState | None = None
@@ -113,14 +143,18 @@ def run_job(session: Session, job_id: uuid.UUID, connector: Connector, *, now=No
         session.flush()
         findings = connector.scan_unit(unit)
         for f in findings:
+            locator = f.locator.as_dict()
+            sup = _suppressed_by(locator, f.category, suppressions)
             session.add(FindingRow(
                 scan_job_id=job.id, application_id=application_id,
                 data_source_id=data_source_id, unit_id=su.id,
                 category=f.category, tier=f.tier,
                 confidence=round(f.confidence, 3), hit_rate=round(f.hit_rate, 3),
-                locator=f.locator.as_dict(), protection_state=f.protection_state,
+                locator=locator, protection_state=f.protection_state,
                 combined_identity=f.combined_identity, evidence=list(f.evidence)[:3],
-                pack_version=f.pack_version or None))
+                pack_version=f.pack_version or None,
+                review_state=ReviewState.SUPPRESSED if sup else ReviewState.NEW,
+                suppression_id=sup.id if sup else None))
         su.state = ScanState.COMPLETED
         su.duration_ms = max(0, (clock() - started) * 1000)
         units_done += 1
@@ -159,12 +193,15 @@ def _rebuild_inventory(session: Session, application_id: uuid.UUID,
                        job_id: uuid.UUID) -> dict[str, dict]:
     """One row per application x category from this job's findings (SRS 8.2).
 
-    Owner-annotated columns (purpose, source_of_data, recipients) are preserved:
-    the upsert updates only the computed fields on conflict.
+    Owner-annotated columns (purpose, source_of_data, recipients, retention) are
+    preserved: the upsert updates only the computed fields on conflict. Findings a
+    reviewer marked suppressed or false-positive are excluded from the data map.
     """
     rows = session.query(FindingRow).filter(
         FindingRow.scan_job_id == job_id,
-        FindingRow.application_id == application_id).all()
+        FindingRow.application_id == application_id,
+        FindingRow.review_state.notin_(
+            (ReviewState.SUPPRESSED, ReviewState.FALSE_POSITIVE))).all()
 
     agg: dict[str, dict] = defaultdict(lambda: {
         "tier": Tier.LOW, "locations": set(), "protection": defaultdict(int)})
