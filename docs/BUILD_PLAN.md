@@ -11,7 +11,7 @@ findings to assess.
 | Phase | Gate (SRS 13.1) | Status |
 | --- | --- | --- |
 | **Foundation** | SSO login; app + data source CRUD per role; migrations + CI green; Compose stack runs from a clean clone | In progress |
-| **Discovery core** | Git + PostgreSQL connectors scan the fixtures; pack precision ≥0.95 and recall ≥0.90; 500-table schema <60 min; findings explorer with filter/drawer/review; live progress | Core engine done; connectors next |
+| **Discovery core** | Git + PostgreSQL connectors scan the fixtures; pack precision ≥0.95 and recall ≥0.90; 500-table schema <60 min; findings explorer with filter/drawer/review; live progress | Core engine + platform DB (models, Alembic baseline, RLS) done; connectors next |
 | **DPIA workflow** | Questionnaire A–K pre-filled from inventory; risk engine matches a hand-computed case; audited transitions; PDF + DOCX report; portfolio dashboard; first DPIA published | Risk engine + controls + questionnaire done; workflow + reports next |
 | **Hardening** | Oracle/MSSQL/MySQL connectors; vault + row-level security; VAPT clean; UAT sign-off; Helm deploy | Not started |
 
@@ -45,9 +45,16 @@ heart of Discovery core and DPIA workflow — plus a minimal Foundation API.
 
 ## Next increment (Discovery core — connectors & persistence)
 
-1. PostgreSQL platform DB: SQLAlchemy 2 (async) models for the SRS section 8
+1. ~~PostgreSQL platform DB: SQLAlchemy 2 (async) models for the SRS section 8
    schema (registry, scanning, assessment, platform), Alembic baseline migration,
-   row-level security policy keyed on application.
+   row-level security policy keyed on application.~~ **DONE** — `platform_db/`:
+   23 tables across the four groups with UUID v7 keys and the created/updated audit
+   quartet; native PG enums reusing `dpia_core`'s detection enums; `findings`
+   LIST-partitioned by `scan_job_id`; GIN indexes on `applications.tags` and
+   `findings.locator`; the `0001` Alembic baseline; forced RLS on the nine
+   application-scoped tables keyed on two session GUCs; and the append-only
+   `audit_log` trigger. Async psycopg 3 session + `set_rls_context` helper. 16 tests
+   (structural — no live PostgreSQL in the dev environment).
 2. Git connector (`worker/connectors/git.py`): clone/pull, ignore rules, parse
    identifiers + string literals for Python/Java/C#/JS/TS/SQL via `evaluate_text`.
 3. PostgreSQL connector: read-only enumerate schemas/tables/columns + capped

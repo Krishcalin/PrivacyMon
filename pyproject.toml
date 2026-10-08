@@ -38,7 +38,11 @@ dev = [
 ]
 
 [tool.setuptools]
-packages = ["dpia_core", "dpia_core.detectors", "api", "api.app"]
+packages = [
+    "dpia_core", "dpia_core.detectors",
+    "platform_db", "platform_db.models",
+    "api", "api.app",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
