@@ -191,3 +191,69 @@ Validated live on the Docker stack: unauthenticated request → 401; bootstrap-a
 → JWT; an Owner sees only its own application (RLS fail-closed, a foreign application
 returns 404 with no existence leak) while the global Admin sees all; an Owner's
 approve → 403; a non-admin hitting `/admin/users` → 403; a bad password → 401.
+
+## Findings review workflow & editable inventory (feature 1)
+
+**DONE.** Wires the reviewer verdicts on findings and an editable data-inventory matrix,
+and introduces the first append-only audit-log writes.
+
+- **Review** (`api/app/console.py`): `POST /findings/{id}/review` (confirm /
+  false_positive / reclassify / suppress) + a bulk variant. Suppress creates a
+  `suppressions` row keyed on a locator subset (column / table / file-path scope), whose
+  match is interpreted against the locator shape and is never empty (so a suppression
+  can't silence a whole category by accident). Suppressions CRUD included.
+- **Persistence across scans** (`worker/pipeline.py`): active suppressions load once per
+  scan; a matching finding is written already suppressed, so a reviewer's decision
+  carries across every future scan. Suppressed / false-positive findings are excluded
+  from the inventory rebuild.
+- **Editable inventory**: `PUT /applications/{id}/inventory/{category}` edits purpose,
+  source, recipients and the new `retention` field (migration 0004, idempotent); the
+  scan already preserves these owner annotations across re-scans.
+- **Audit** (`api/app/audit.py`): the first code to write the append-only `audit_log` —
+  one row per review / suppression / inventory edit, best-effort so it never breaks the
+  primary action.
+- **Console**: review controls + a review-state filter in the findings drawer; a Data
+  inventory screen that edits the matrix in place and lists/lifts suppressions.
+
+## Continuous monitoring (feature 2)
+
+**DONE.** Scans run on a cron cadence, each is diffed against the previous one, a material
+change flags the affected DPIAs for re-review and fans out notifications.
+
+- **Scheduling**: a Celery **beat** service (`infra/docker-compose.yml`) fires a
+  once-a-minute tick (`worker/tasks.py:scheduled_scan_tick`) that enqueues scans for data
+  sources whose `schedule_cron` is due, skipping any already queued/running, and advances
+  `last_scan_job_id`. `worker/monitoring.py` holds a dependency-free cron evaluator.
+- **Change detection** (`worker/monitoring.py` + `worker/pipeline.py`): `diff_inventory`
+  classifies new categories, tier escalations, new high/critical data and material growth;
+  on a material change the pipeline records a `change_events` row (migration 0005,
+  RLS-scoped), flags every non-draft DPIA (`needs_review`), and notifies.
+- **Notifications** (`worker/notify.py`): webhook fan-out (HMAC-signed when a secret is
+  set) + optional SMTP email, stdlib-only and best-effort.
+- **API/console** (`api/app/monitoring.py`): schedule a source, a change-event timeline
+  with acknowledge, and admin webhook CRUD. The overview shows a per-source schedule
+  control and a monitoring timeline; a flagged DPIA shows a "needs re-review" banner.
+
+## Deeper discovery (feature 3)
+
+**DONE.** Four additions that widen and deepen what a scan finds.
+
+- **NER** (`dpia_core/ner.py`): optional spaCy behind a soft import (absent → no NER, no
+  error); on the **Deep** profile the engine adds person-name / address findings for
+  categories the pattern/dictionary detectors missed.
+- **New connectors**: `worker/connectors/filesystem.py` (file-share / export directory of
+  CSV/JSON/text/log data files) and `worker/connectors/openapi.py` (OpenAPI 3.x / Swagger
+  2.0 schemas, URL or path, no endpoint ever called); both wired in `worker/factory.py`
+  for the `filesystem` / `openapi` data-source kinds.
+- **Custom detectors** (`dpia_core/detectors/compile.py` + `worker/detectors.py` +
+  `api/app/detectors_api.py`): an admin defines a category/tier/regex/named-validator/
+  keyword detector through a new **Detectors** screen; it is validated by compiling it
+  (a validator resolves only from a fixed registry — no executable code) and merged into
+  every scan's chain (findings tagged `builtin-1.0.0+custom`).
+- **Incremental scans**: `scan_units.content_hash` + `scan_jobs.incremental` (migration
+  0006). A connector fingerprint (size+mtime) lets an incremental scan skip an unchanged
+  unit and carry its prior findings forward into the new partition, while a changed unit
+  is re-scanned — so skipping never erases the inventory.
+
+All three features validated live on the Docker stack (api + web + worker + beat +
+postgres + redis). Host suite: 102 -> 143 passing.
