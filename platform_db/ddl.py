@@ -26,6 +26,7 @@ RLS_TABLES: dict[str, str] = {
     "risks": "application_id",
     "dpia_transitions": "application_id",
     "dpia_records": "application_id",
+    "change_events": "application_id",
 }
 
 

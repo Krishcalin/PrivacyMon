@@ -6,7 +6,7 @@ import uuid
 
 from sqlalchemy import (
     BigInteger, Boolean, DateTime, ForeignKey, Index, Integer, Numeric,
-    String, Text, UniqueConstraint,
+    String, Text, UniqueConstraint, func,
 )
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.dialects.postgresql import UUID as PgUUID
@@ -195,3 +195,32 @@ class Inventory(UUIDPKMixin, TimestampMixin, Base):
     retention: Mapped[str | None] = mapped_column(Text, nullable=True)
     computed_at: Mapped[DateTime | None] = mapped_column(
         DateTime(timezone=True), nullable=True)
+
+
+class ChangeEvent(UUIDPKMixin, TimestampMixin, Base):
+    """A material change detected between two scans of an application (SRS FR-4.x /
+    continuous monitoring). Recorded at scan end when the inventory diff is material, so
+    the console can show a monitoring timeline and a DPO can see why a DPIA was flagged
+    for re-review."""
+
+    __tablename__ = "change_events"
+    __table_args__ = (
+        Index("ix_change_events_application_id", "application_id"),
+        Index("ix_change_events_at", "at"),
+    )
+
+    application_id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("applications.id", ondelete="CASCADE"),
+        nullable=False)
+    data_source_id: Mapped[uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("data_sources.id", ondelete="SET NULL"),
+        nullable=True)
+    scan_job_id: Mapped[uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True), nullable=True)
+    at: Mapped[DateTime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False)
+    severity: Mapped[str] = mapped_column(String(20), nullable=False, default="info")
+    summary: Mapped[str] = mapped_column(Text, nullable=False)
+    delta: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict,
+                                        server_default="{}")
+    acknowledged: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)

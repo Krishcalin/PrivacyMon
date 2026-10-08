@@ -15,7 +15,7 @@ from dpia_core.controls import CONTROL_LIBRARY, QUESTIONNAIRE
 from dpia_core.detectors import DEFAULT_PACK_VERSION, default_detectors
 from dpia_core.engine import evaluate_column, visible_findings
 
-from . import assessment, auth, console, db, dpia, report, scans
+from . import assessment, auth, console, db, dpia, monitoring, report, scans
 from .settings import settings
 
 app = FastAPI(
@@ -38,6 +38,7 @@ app.include_router(console.router, dependencies=_auth)
 app.include_router(dpia.router, dependencies=_auth)
 app.include_router(assessment.router, dependencies=_auth)
 app.include_router(report.router, dependencies=_auth)
+app.include_router(monitoring.router, dependencies=_auth)
 
 
 @app.on_event("startup")

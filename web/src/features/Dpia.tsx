@@ -46,7 +46,10 @@ export function DpiaList() {
                 <tbody>
                   {data.dpias.map((d) => (
                     <tr key={d.id} className="clickable" onClick={() => navigate(`/dpias/${d.id}`)}>
-                      <td><span className="chip gray">{d.state}</span></td>
+                      <td>
+                        <span className="chip gray">{d.state}</span>
+                        {d.needs_review && <span className="chip tier-high" style={{ marginLeft: 6 }}>needs re-review</span>}
+                      </td>
                       <td className="mono">{d.inherent_score ?? "—"}</td>
                       <td className="mono">{d.residual_score ?? "—"}</td>
                       <td>{d.risk_band ? <span className={`chip tier-${d.risk_band === "very_high" ? "critical" : d.risk_band}`}>{d.risk_band}</span> : "—"}</td>
@@ -96,6 +99,12 @@ export function DpiaWorkspace() {
         <button className="btn" onClick={() => fetchReport(dpiaId, "pdf")}>PDF</button>
         <button className="btn" onClick={() => fetchReport(dpiaId, "docx")}>DOCX</button>
       </div>
+      {d.needs_review && (
+        <div className="login-error" style={{ marginBottom: 14 }}>
+          A later scan detected a material change in this application's data. Review the
+          monitoring timeline on the overview and recompute this DPIA.
+        </div>
+      )}
 
       <div className="grid cols-4" style={{ marginBottom: 16 }}>
         <div className="card stat"><div className="n">{d.inherent_score ?? "—"}</div><div className="l">Inherent risk</div></div>

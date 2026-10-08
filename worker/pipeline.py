@@ -26,10 +26,13 @@ from sqlalchemy.orm import Session
 
 from dpia_core import risk as risk_engine
 from dpia_core.models import ScanProfile, Tier
-from platform_db.enums import ReviewState, ScanState
-from platform_db.models.registry import Application
+from platform_db.enums import DpiaState, ReviewState, ScanState
+from platform_db.models.assessment import DpiaAssessment
+from platform_db.models.registry import Application, DataSource
+from platform_db.models.scanning import ChangeEvent
 from platform_db.models.scanning import Finding as FindingRow
 from platform_db.models.scanning import Inventory, ScanJob, ScanUnit, Suppression
+from worker import monitoring, notify
 from worker.connectors.base import Connector
 
 _TIER_RANK = {Tier.LOW: 0, Tier.MEDIUM: 1, Tier.HIGH: 2, Tier.CRITICAL: 3}
@@ -170,6 +173,9 @@ def run_job(session: Session, job_id: uuid.UUID, connector: Connector, *, now=No
         return _summary(job_id, stopped_state.value, units_done, findings_total,
                         inventory={}, risk=None)
 
+    # Capture the inventory as it stood BEFORE this scan's rebuild, so change detection
+    # compares like with like (the previous scan's view of the same application).
+    previous_inventory = _snapshot_inventory(session, application_id)
     inventory = _rebuild_inventory(session, application_id, job.id)
     risk = _inherent_risk(session, application_id, inventory)
     job.state = ScanState.COMPLETED
@@ -177,6 +183,9 @@ def run_job(session: Session, job_id: uuid.UUID, connector: Connector, *, now=No
     job.findings_count = findings_total
     job.finished_at = text("now()")
     session.commit()
+
+    detect_and_flag_changes(session, application_id, data_source_id, job.id,
+                            previous_inventory, inventory)
     return _summary(job_id, ScanState.COMPLETED.value, units_done, findings_total,
                     inventory=inventory, risk=risk)
 
@@ -259,3 +268,109 @@ def _inherent_risk(session: Session, application_id: uuid.UUID,
     score = risk_engine.inherent_risk(categories, exposure)
     return {"score": round(score, 2), "band": risk_engine.band(score).value,
             "exposure_multiplier": round(risk_engine.exposure_multiplier(exposure), 3)}
+
+
+def _snapshot_inventory(session: Session, application_id: uuid.UUID) -> dict[str, dict]:
+    """The application's inventory as it stands now — {category: {tier, locations_count}}.
+    Read before a rebuild so change detection compares the prior scan to the new one."""
+    rows = session.query(Inventory).filter(
+        Inventory.application_id == application_id).all()
+    return {r.category.value: {"tier": r.tier.value,
+                               "locations_count": r.locations_count} for r in rows}
+
+
+def detect_and_flag_changes(session: Session, application_id: uuid.UUID,
+                            data_source_id: uuid.UUID | None, job_id: uuid.UUID,
+                            previous: dict, current: dict) -> dict | None:
+    """Compare the previous and current inventory; on a material change record a
+    ``change_events`` row, flag the application's non-draft DPIAs for re-review, and
+    dispatch notifications. Also advance the data source's ``last_scan_job_id``. Returns
+    the delta dict when a change was recorded, else None. Never raises."""
+    try:
+        if data_source_id is not None:
+            ds = session.get(DataSource, data_source_id)
+            if ds is not None:
+                ds.last_scan_job_id = job_id
+
+        # The first scan of an application has no prior inventory — nothing to diff.
+        if not previous:
+            session.commit()
+            return None
+
+        delta = monitoring.diff_inventory(previous, current)
+        if not monitoring.is_material(delta):
+            session.commit()
+            return None
+
+        summary = _summarise_delta(delta)
+        severity = "high" if delta.new_critical else "medium"
+        session.add(ChangeEvent(
+            application_id=application_id, data_source_id=data_source_id,
+            scan_job_id=job_id, severity=severity, summary=summary,
+            delta=delta.as_dict()))
+
+        # Flag every non-draft DPIA for this application: its snapshot is now stale.
+        flagged = session.query(DpiaAssessment).filter(
+            DpiaAssessment.application_id == application_id,
+            DpiaAssessment.state != DpiaState.DRAFT,
+            DpiaAssessment.needs_review.is_(False)).all()
+        for d in flagged:
+            d.needs_review = True
+        session.commit()
+
+        _notify_change(session, application_id, summary, severity, delta, len(flagged))
+        return delta.as_dict()
+    except Exception:  # noqa: BLE001 — monitoring must never fail a completed scan
+        session.rollback()
+        return None
+
+
+def _summarise_delta(delta) -> str:
+    bits = []
+    if delta.new_categories:
+        bits.append(f"{len(delta.new_categories)} new categor"
+                    f"{'y' if len(delta.new_categories) == 1 else 'ies'} "
+                    f"({', '.join(delta.new_categories)})")
+    if delta.escalated:
+        bits.append(f"{len(delta.escalated)} tier escalation(s)")
+    if delta.new_critical:
+        bits.append(f"new high/critical data: {', '.join(delta.new_critical)}")
+    if delta.grew:
+        bits.append(f"{len(delta.grew)} category spread(s)")
+    if delta.removed_categories:
+        bits.append(f"{len(delta.removed_categories)} categor"
+                    f"{'y' if len(delta.removed_categories) == 1 else 'ies'} no longer found")
+    return "; ".join(bits) or "inventory changed"
+
+
+def _notify_change(session: Session, application_id: uuid.UUID, summary: str,
+                   severity: str, delta, flagged: int) -> None:
+    """Best-effort fan-out of a material change to webhooks and (optionally) email."""
+    app = session.get(Application, application_id)
+    app_name = getattr(app, "name", str(application_id))
+    payload = {"application_id": str(application_id), "application": app_name,
+               "severity": severity, "summary": summary,
+               "dpias_flagged": flagged, "delta": delta.as_dict()}
+    notify.deliver_webhooks(session, "inventory.changed", payload)
+    if notify.smtp_configured():
+        notify.send_email(
+            subject=f"[PrivacyMon] {app_name}: {summary}",
+            body=(f"A scan of {app_name} detected a material change in personal-data "
+                  f"exposure.\n\n{summary}\n\n{flagged} DPIA(s) were flagged for "
+                  f"re-review."),
+            recipients=_notify_recipients(session))
+
+
+def _notify_recipients(session: Session) -> list[str]:
+    """Deployment-wide notification recipients from the settings table (key
+    ``notify.emails``), falling back to an env list. Never raises."""
+    import os
+    try:
+        from platform_db.models.platform_tables import Setting
+        row = session.get(Setting, "notify.emails")
+        if row and isinstance(row.value, dict) and row.value.get("to"):
+            return list(row.value["to"])
+    except Exception:  # noqa: BLE001
+        pass
+    env = os.getenv("PRIVACYMON_NOTIFY_EMAILS", "")
+    return [e.strip() for e in env.split(",") if e.strip()]

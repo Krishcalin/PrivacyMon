@@ -241,6 +241,23 @@ export const api = {
   reportUrl: (id: string, format: "html" | "pdf" | "docx") =>
     `${BASE}/dpias/${id}/report?format=${format}`,
 
+  // ── continuous monitoring ─────────────────────────────────────────────────
+  setSchedule: (dataSourceId: string, schedule_cron: string | null) =>
+    http<{ data_source_id: string; schedule_cron: string | null }>(
+      `/data-sources/${dataSourceId}/schedule`, {
+        method: "PUT", body: JSON.stringify({ schedule_cron }),
+      }),
+  changes: (id: string) =>
+    http<{ count: number; changes: ChangeEvent[] }>(`/applications/${id}/changes`),
+  acknowledgeChange: (changeId: string) =>
+    http<{ id: string; acknowledged: boolean }>(
+      `/changes/${changeId}/acknowledge`, { method: "POST" }),
+  webhooks: () => http<{ count: number; webhooks: WebhookRow[] }>("/admin/webhooks"),
+  createWebhook: (body: { url: string; event_types?: string[]; secret?: string }) =>
+    http<{ id: string }>("/admin/webhooks", { method: "POST", body: JSON.stringify(body) }),
+  deleteWebhook: (id: string) =>
+    http<void>(`/admin/webhooks/${id}`, { method: "DELETE" }),
+
   // ── auth & admin ──────────────────────────────────────────────────────────
   login: (email: string, password: string) =>
     http<LoginResponse>("/auth/login", {
@@ -289,6 +306,30 @@ export async function fetchReport(
   setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }
 
+export interface ChangeEvent {
+  id: string;
+  at: string | null;
+  severity: string;
+  summary: string;
+  delta: {
+    new_categories?: string[];
+    escalated?: { category: string; from: string; to: string }[];
+    grew?: { category: string; from: number; to: number }[];
+    removed_categories?: string[];
+    new_critical?: string[];
+  };
+  acknowledged: boolean;
+  scan_job_id: string | null;
+}
+
+export interface WebhookRow {
+  id: string;
+  url: string;
+  event_types: string[];
+  active: boolean;
+  has_secret: boolean;
+}
+
 export type Role = "admin" | "dpo" | "owner" | "auditor" | "operator";
 
 export interface LoginResponse {
@@ -319,6 +360,7 @@ export interface DpiaSummary {
   id: string;
   application_id: string;
   state: string;
+  needs_review: boolean;
   inherent_score: number | null;
   residual_score: number | null;
   risk_band: Tier | "very_high" | null;

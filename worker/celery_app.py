@@ -10,6 +10,7 @@ from __future__ import annotations
 import os
 
 from celery import Celery
+from celery.schedules import crontab
 
 BROKER_URL = os.getenv("PRIVACYMON_BROKER_URL", "redis://localhost:6379/0")
 RESULT_BACKEND = os.getenv("PRIVACYMON_RESULT_BACKEND", BROKER_URL)
@@ -22,6 +23,15 @@ celery_app.conf.update(
     task_track_started=True,
     task_always_eager=os.getenv("PRIVACYMON_CELERY_EAGER") == "1",
     task_eager_propagates=True,
+    timezone="UTC",
+    # Continuous monitoring: beat runs the scheduler tick once a minute; the tick itself
+    # decides which data sources are due from their cron expressions (SRS FR-3.1).
+    beat_schedule={
+        "scheduled-scan-tick": {
+            "task": "privacymon.scheduled_scan_tick",
+            "schedule": crontab(minute="*"),
+        },
+    },
 )
 
 # Importing registers the tasks on the app.

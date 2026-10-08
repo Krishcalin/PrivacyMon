@@ -91,7 +91,7 @@ export function ApplicationOverview() {
           </div>
           {sources.data && sources.data.data_sources.length > 0 ? (
             <table>
-              <thead><tr><th>Name</th><th>Kind</th><th /></tr></thead>
+              <thead><tr><th>Name</th><th>Kind</th><th>Schedule</th><th /></tr></thead>
               <tbody>
                 {sources.data.data_sources.map((d) => {
                   const c = d.connection as Record<string, unknown>;
@@ -109,6 +109,7 @@ export function ApplicationOverview() {
                         {testResult[d.id] && <div className="muted" style={{ fontSize: 12 }}>{testResult[d.id]}</div>}
                       </td>
                       <td><span className="chip gray">{d.kind}</span></td>
+                      <td><ScheduleCell appId={id} dataSourceId={d.id} cron={d.schedule_cron ?? null} /></td>
                       <td className="right">
                         <button disabled={testConn.isPending} onClick={() => testConn.mutate(d.id)}>Test</button>{" "}
                         <button className="primary" disabled={startScan.isPending || !!activeJob}
@@ -128,8 +129,99 @@ export function ApplicationOverview() {
         </div>
       </div>
 
+      <ChangesPanel appId={id} />
+
       {adding && <AddSource appId={id} onClose={() => { setAdding(false); qc.invalidateQueries({ queryKey: ["sources", id] }); }} />}
     </>
+  );
+}
+
+// Common cron presets plus a free-text field; empty clears the schedule.
+const CRON_PRESETS: { label: string; value: string }[] = [
+  { label: "Off", value: "" },
+  { label: "Hourly", value: "0 * * * *" },
+  { label: "Daily 02:00", value: "0 2 * * *" },
+  { label: "Weekly (Mon 03:00)", value: "0 3 * * 1" },
+  { label: "Every 15 min", value: "*/15 * * * *" },
+];
+
+function ScheduleCell({ appId, dataSourceId, cron }: { appId: string; dataSourceId: string; cron: string | null }) {
+  const qc = useQueryClient();
+  const [value, setValue] = useState(cron ?? "");
+  const preset = CRON_PRESETS.find((p) => p.value === value) ? value : "__custom";
+
+  const save = useMutation({
+    mutationFn: (v: string) => api.setSchedule(dataSourceId, v.trim() || null),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["sources", appId] }),
+  });
+
+  return (
+    <div style={{ minWidth: 180 }}>
+      <select
+        value={preset}
+        onChange={(e) => {
+          const v = e.target.value;
+          if (v === "__custom") return;
+          setValue(v);
+          save.mutate(v);
+        }}
+        style={{ marginBottom: 4 }}
+      >
+        {CRON_PRESETS.map((p) => <option key={p.label} value={p.value}>{p.label}</option>)}
+        <option value="__custom">Custom…</option>
+      </select>
+      <div style={{ display: "flex", gap: 4 }}>
+        <input className="mono" value={value} placeholder="cron (off)"
+          onChange={(e) => setValue(e.target.value)} style={{ fontSize: 12 }} />
+        <button className="btn" disabled={save.isPending || value === (cron ?? "")}
+          onClick={() => save.mutate(value)}>Set</button>
+      </div>
+      {save.isError && <div className="muted" style={{ fontSize: 11, color: "var(--crit)" }}>
+        {(save.error as Error).message}</div>}
+    </div>
+  );
+}
+
+function ChangesPanel({ appId }: { appId: string }) {
+  const qc = useQueryClient();
+  const changes = useQuery({ queryKey: ["changes", appId], queryFn: () => api.changes(appId) });
+  const ack = useMutation({
+    mutationFn: (changeId: string) => api.acknowledgeChange(changeId),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["changes", appId] }),
+  });
+
+  if (changes.isLoading) return null;
+  const rows = changes.data?.changes ?? [];
+
+  return (
+    <div className="card" style={{ marginTop: 16 }}>
+      <h2 style={{ marginTop: 0 }}>Monitoring timeline</h2>
+      <p className="muted" style={{ marginTop: -6 }}>
+        Material changes detected between scans. A flagged change marks the application's
+        DPIAs for re-review.
+      </p>
+      {rows.length === 0 ? (
+        <p className="empty">No changes detected yet.</p>
+      ) : (
+        <table>
+          <thead><tr><th>When</th><th>Severity</th><th>Change</th><th /></tr></thead>
+          <tbody>
+            {rows.map((c) => (
+              <tr key={c.id} style={{ opacity: c.acknowledged ? 0.55 : 1 }}>
+                <td className="muted">{c.at ? new Date(c.at).toLocaleString() : "—"}</td>
+                <td><span className={`chip ${c.severity === "high" ? "tier-high" : "tier-medium"}`}>{c.severity}</span></td>
+                <td>{c.summary}</td>
+                <td className="right">
+                  {c.acknowledged
+                    ? <span className="muted">acknowledged</span>
+                    : <button className="btn" disabled={ack.isPending} onClick={() => ack.mutate(c.id)}>Acknowledge</button>}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
   );
 }
 

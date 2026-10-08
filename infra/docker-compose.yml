@@ -55,6 +55,15 @@ services:
     env_file: [.env]
     depends_on: { postgres: { condition: service_healthy }, redis: { condition: service_started } }
 
+  # Celery beat: the continuous-monitoring scheduler. Fires the scheduled-scan tick once
+  # a minute; the tick enqueues scans for data sources whose cron is due (SRS FR-3.1).
+  beat:
+    build: { context: .., dockerfile: infra/worker.Dockerfile }
+    profiles: ["full"]
+    env_file: [.env]
+    command: ["celery", "-A", "worker.celery_app", "beat", "--loglevel=info"]
+    depends_on: { postgres: { condition: service_healthy }, redis: { condition: service_started } }
+
   web:
     build: { context: ../web, dockerfile: Dockerfile }
     profiles: ["full"]
