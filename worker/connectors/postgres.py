@@ -17,8 +17,8 @@ from __future__ import annotations
 from typing import Any, Callable, Iterable
 
 from dpia_core.detectors.registry import DEFAULT_PACK_VERSION, default_detectors
-from dpia_core.engine import apply_cooccurrence, evaluate_column
 from dpia_core.models import Finding, ScanProfile
+from worker.connectors import detect
 from worker.connectors.base import ConnectorTest, ScanUnit
 
 # Schemas that are never application data.
@@ -104,17 +104,10 @@ class PostgresConnector:
     # ── pure detection (no I/O — unit-testable) ───────────────────────────────
     def _rows_to_findings(self, schema: str, table: str,
                           columns: list[dict], rows: list[tuple]) -> list[Finding]:
-        findings: list[Finding] = []
-        for idx, col in enumerate(columns):
-            values = [r[idx] for r in rows] if rows else []
-            findings.extend(evaluate_column(
-                self.detectors, col["name"], values,
-                data_type=col.get("data_type"), schema=schema, table=table,
-                profile=self.profile, pack_version=self.pack_version))
-        if self.presence_only:
-            for f in findings:
-                f.evidence = []          # record the presence, never a value fragment
-        return apply_cooccurrence(findings)
+        return detect.scan_columns(
+            self.detectors, schema, table, columns, rows,
+            profile=self.profile, pack_version=self.pack_version,
+            presence_only=self.presence_only)
 
     # ── grants (FR-2.5) ────────────────────────────────────────────────────────
     def table_grants(self, schema: str, table: str) -> list[str]:

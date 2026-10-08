@@ -45,7 +45,7 @@ def test_postgres_without_a_dsn_is_a_clear_error():
 
 def test_unimplemented_kind_is_reported():
     with pytest.raises(NotImplementedError):
-        build_connector(_DataSource(DataSourceKind.ORACLE, {"dsn": "x"}))
+        build_connector(_DataSource(DataSourceKind.OPENAPI, {"dsn": "x"}))
 
 
 def test_postgres_target_builds_dsn_from_parts_and_encrypted_credential(monkeypatch):
@@ -61,3 +61,42 @@ def test_postgres_target_builds_dsn_from_parts_and_encrypted_credential(monkeypa
     assert isinstance(c, PostgresConnector)
     assert c.presence_only is True
     assert c.dsn == "postgresql://scan_ro:ro-pass@10.0.0.5:5432/appdb"
+
+
+def _target_ds(kind, *, database="appdb", port=None):
+    conn = {"host": "10.0.0.9", "database": database, "username": "scan_ro",
+            "presence_only": True}
+    if port:
+        conn["port"] = port
+    ds = _DataSource(kind, conn)
+    return ds
+
+
+def test_mysql_oracle_mssql_build_sql_connectors_with_right_urls(monkeypatch):
+    from platform_db import crypto
+    from worker.connectors.sql import SqlConnector
+    key = crypto.new_master_key()
+    monkeypatch.setenv("PRIVACYMON_MASTER_KEY", key)
+    ref = crypto.encrypt_secret("ro-pass", key=key)
+
+    for ds in (_target_ds(DataSourceKind.MYSQL), _target_ds(DataSourceKind.ORACLE),
+               _target_ds(DataSourceKind.MSSQL)):
+        ds.credential_ref = ref
+        c = build_connector(ds)
+        assert isinstance(c, SqlConnector) and c.presence_only is True
+
+    my = _target_ds(DataSourceKind.MYSQL)
+    my.credential_ref = ref
+    assert build_connector(my).url.drivername == "mysql+pymysql"
+    assert build_connector(my).url.port == 3306            # default port applied
+
+    orc = _target_ds(DataSourceKind.ORACLE)
+    orc.credential_ref = ref
+    url = build_connector(orc).url
+    assert url.drivername == "oracle+oracledb" and url.port == 1521
+    assert url.query["service_name"] == "appdb"            # Oracle uses service name
+
+    ms = _target_ds(DataSourceKind.MSSQL, port=1444)
+    ms.credential_ref = ref
+    url = build_connector(ms).url
+    assert url.drivername == "mssql+pymssql" and url.port == 1444 and url.password == "ro-pass"

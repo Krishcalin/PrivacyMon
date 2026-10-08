@@ -11,6 +11,7 @@ WORKDIR /app
 RUN pip install --no-cache-dir \
     "sqlalchemy[asyncio]>=2.0" "psycopg[binary]>=3.1" \
     "celery>=5.3" "redis>=5.0" "cryptography>=42.0" \
+    "PyMySQL>=1.1" "oracledb>=2.0" "pymssql>=2.3" \
     "GitPython>=3.1" "PyYAML>=6.0" "structlog>=24.1"
 
 COPY dpia_core/ ./dpia_core/

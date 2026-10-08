@@ -4,6 +4,12 @@ import { Link, useNavigate } from "react-router-dom";
 import { api } from "../lib/api";
 
 const ENVIRONMENTS = ["prod", "uat", "dev"];
+const DB_KINDS: { value: string; label: string; port: string }[] = [
+  { value: "postgres", label: "PostgreSQL", port: "5432" },
+  { value: "mysql", label: "MySQL", port: "3306" },
+  { value: "oracle", label: "Oracle", port: "1521" },
+  { value: "mssql", label: "SQL Server", port: "1433" },
+];
 const HOSTINGS = ["on_prem", "cloud"];
 const USER_BASES = ["", "employees", "customers", "vendors", "public"];
 const LIFECYCLES = ["draft", "active", "decommissioned"];
@@ -60,17 +66,19 @@ function ScanTargetForm({ onClose }: { onClose: () => void }) {
   const qc = useQueryClient();
   const navigate = useNavigate();
   const [f, setF] = useState({
-    name: "", host: "", port: "5432", database: "", username: "", password: "",
-    environment: "prod", presence_only: true,
+    name: "", kind: "postgres", host: "", port: "5432", database: "",
+    username: "", password: "", environment: "prod", presence_only: true,
   });
   const set = (k: string, v: unknown) => setF((s) => ({ ...s, [k]: v }));
+  const setKind = (value: string) =>
+    setF((s) => ({ ...s, kind: value, port: DB_KINDS.find((k) => k.value === value)!.port }));
 
   const mutation = useMutation({
     mutationFn: () =>
       api.registerScanTarget({
         name: f.name.trim(),
         environment: f.environment,
-        kind: "postgres",
+        kind: f.kind,
         host: f.host.trim(),
         port: Number(f.port) || 5432,
         database: f.database.trim(),
@@ -99,6 +107,10 @@ function ScanTargetForm({ onClose }: { onClose: () => void }) {
         </p>
         <label>Application name</label>
         <input value={f.name} onChange={(e) => set("name", e.target.value)} placeholder="HR Portal" />
+        <label>Database engine</label>
+        <select value={f.kind} onChange={(e) => setKind(e.target.value)}>
+          {DB_KINDS.map((k) => <option key={k.value} value={k.value}>{k.label}</option>)}
+        </select>
         <div className="row">
           <div style={{ flex: 2 }}>
             <label>Host / IP address</label>
@@ -109,8 +121,9 @@ function ScanTargetForm({ onClose }: { onClose: () => void }) {
             <input className="mono" value={f.port} onChange={(e) => set("port", e.target.value)} />
           </div>
         </div>
-        <label>Database</label>
-        <input className="mono" value={f.database} onChange={(e) => set("database", e.target.value)} placeholder="appdb" />
+        <label>Database{f.kind === "oracle" ? " / service name" : ""}</label>
+        <input className="mono" value={f.database} onChange={(e) => set("database", e.target.value)}
+          placeholder={f.kind === "oracle" ? "ORCLPDB1" : "appdb"} />
         <div className="row">
           <div style={{ flex: 1 }}>
             <label>Read-only username</label>

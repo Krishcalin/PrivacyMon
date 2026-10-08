@@ -110,6 +110,13 @@ heart of Discovery core and DPIA workflow — plus a minimal Foundation API.
    which columns hold which PII category (PAN, Voter ID, DOB, mobile, …) with no value —
    not even a masked fragment — leaving the target. Endpoints `POST /scan-targets`,
    `POST /data-sources/{id}/test`; connector flag `presence_only`.
+   **All four in-scope engines are supported** — PostgreSQL (psycopg connector),
+   and MySQL / Oracle / SQL Server through one SQLAlchemy-reflection connector
+   (`worker/connectors/sql.py`) that shares the same `detect.scan_columns` detection.
+   The console form picks the engine (with its default port); the factory builds the
+   right driver URL (psycopg / pymysql / oracledb-thin / pymssql). PostgreSQL and MySQL
+   are validated live end to end; Oracle and SQL Server use the identical code path and
+   their drivers are installed, but are not exercised here (no instances).
 6. ~~docker-compose dev stack wired end to end with a seeded sample target DB.~~
    **DONE** — `infra/api.Dockerfile` + `infra/worker.Dockerfile` + `infra/.env(.example)`;
    `docker compose -f infra/docker-compose.yml --profile full up` brings up Postgres,

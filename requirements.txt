@@ -29,10 +29,10 @@ python-docx>=1.1              # DOCX reports
 # --- observability ---
 prometheus-client>=0.20
 
-# --- optional: additional database connectors (install as needed) ---
-# oracledb>=2.0               # Oracle
-# pyodbc>=5.1                 # MS SQL Server
-# mysqlclient>=2.2            # MySQL
+# --- target database drivers (read-only scan-target connectors) ---
+PyMySQL>=1.1                 # MySQL target (pure Python)
+oracledb>=2.0                # Oracle target (thin mode, no Instant Client needed)
+pymssql>=2.3                 # SQL Server target (bundled FreeTDS wheels)
 
 # --- optional: NER for Deep profile (person name / address recall) ---
 # spacy>=3.7

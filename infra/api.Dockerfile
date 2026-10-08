@@ -16,6 +16,7 @@ RUN pip install --no-cache-dir \
     "fastapi>=0.110" "uvicorn[standard]>=0.29" "pydantic>=2.6" \
     "sqlalchemy[asyncio]>=2.0" "alembic>=1.13" "psycopg[binary]>=3.1" \
     "celery>=5.3" "redis>=5.0" "cryptography>=42.0" \
+    "PyMySQL>=1.1" "oracledb>=2.0" "pymssql>=2.3" \
     "structlog>=24.1" "python-multipart>=0.0.9" "GitPython>=3.1" "PyYAML>=6.0"
 
 # The engine, persistence layer, worker (connectors + pipeline) and API.
