@@ -27,6 +27,8 @@ def run_scan_task(self, job_id: str) -> dict:
     from worker.factory import build_connector
     from worker.pipeline import run_job
 
+    from worker.detectors import effective_detectors
+
     Session = _sessionmaker()
     jid = uuid.UUID(job_id)
     with Session() as session:
@@ -34,7 +36,9 @@ def run_scan_task(self, job_id: str) -> dict:
         if job is None:
             raise ValueError(f"scan job {job_id} not found")
         data_source = session.get(DataSource, job.data_source_id)
-        connector = build_connector(data_source, profile=job.profile)
+        detectors, pack_version = effective_detectors(session)
+        connector = build_connector(data_source, profile=job.profile,
+                                    detectors=detectors, pack_version=pack_version)
         return run_job(session, jid, connector)
 
 

@@ -13,7 +13,6 @@ from .detectors.base import DetectorSpec, K_CTX_EXACT, compute_confidence
 from .detectors.dictionary import scan_column_metadata
 from .models import (
     Category,
-    ConfidenceLabel,
     DetectorKind,
     Finding,
     Locator,
@@ -27,6 +26,40 @@ from .masking import mask
 from .protection import infer_protection_state
 
 _CHILD_AGE = 18
+
+# Base confidence for an NER-sourced finding (DetectorKind.NER, SRS 4.1). A model hit on
+# free text is good evidence but not a checksum-validated identifier, so it sits between
+# a dictionary match and a validated pattern.
+_NER_BASE = 0.45
+_NER_TIER = {Category.PERSON_NAME: Tier.MEDIUM, Category.ADDRESS: Tier.MEDIUM}
+
+
+def _ner_findings(text: str, loc: Locator, pack_version: str,
+                  existing: list[Finding]) -> list[Finding]:
+    """Deep-profile only: add person-name / address findings from NER for categories a
+    dictionary detector did not already fire on this location. Soft — returns [] when no
+    NER model is installed."""
+    from . import ner  # local import keeps spaCy fully optional
+    spans = ner.extract_entities(text)
+    if not spans:
+        return []
+    already = {f.category for f in existing}
+    by_cat: dict[Category, list[str]] = defaultdict(list)
+    for s in spans:
+        by_cat[s.category].append(s.text)
+    out: list[Finding] = []
+    for cat, samples in by_cat.items():
+        if cat in already:
+            continue
+        out.append(Finding(
+            category=cat, tier=_NER_TIER.get(cat, Tier.MEDIUM),
+            detector_id=f"ner.{cat.value}", detector_kind=DetectorKind.NER,
+            confidence=min(1.0, _NER_BASE + K_CTX_EXACT), hit_rate=1.0, locator=loc,
+            evidence=[mask(cat, s) for s in samples[:3]],
+            protection_state=ProtectionState.PLAIN, base_score=_NER_BASE,
+            context_positive=True, pack_version=pack_version,
+        ))
+    return out
 
 
 def evaluate_column(
@@ -113,6 +146,12 @@ def evaluate_column(
             base_score=0.70, context_positive=True, pack_version=pack_version,
         ))
 
+    # Deep profile: NER over the sampled values catches free-text names / addresses that
+    # pattern and dictionary detectors miss (SRS 4.1).
+    if profile == ScanProfile.DEEP and not schema_only:
+        blob = "\n".join(str(v) for v in values)
+        findings.extend(_ner_findings(blob, loc, pack_version, findings))
+
     return findings
 
 
@@ -123,11 +162,13 @@ def evaluate_text(
     path: str | None = None,
     line: int | None = None,
     pack_version: str = "",
+    profile: ScanProfile = ScanProfile.STANDARD,
 ) -> list[Finding]:
     """Scan a free-text blob (e.g. a source file or string literal).
 
     Only detectors that do not require column context fire here, since a text
-    blob carries no column name. Each firing detector yields one finding.
+    blob carries no column name. Each firing detector yields one finding. On the Deep
+    profile, NER additionally surfaces free-text person names and addresses (SRS 4.1).
     """
     loc = Locator(kind="file", path=path, line=line)
     findings: list[Finding] = []
@@ -145,6 +186,8 @@ def evaluate_text(
             evidence=evidence, protection_state=ProtectionState.PLAIN,
             base_score=det.base_score, pack_version=pack_version,
         ))
+    if profile == ScanProfile.DEEP:
+        findings.extend(_ner_findings(text, loc, pack_version, findings))
     return findings
 
 

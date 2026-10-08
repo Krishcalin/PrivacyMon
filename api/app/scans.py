@@ -49,26 +49,40 @@ def _enqueue(job_id: uuid.UUID) -> str:
             return "queued"
         except Exception:                            # noqa: BLE001 — fall back to inline
             pass
+    from worker.detectors import effective_detectors
     from worker.factory import build_connector
     from worker.pipeline import run_job
     sessionmaker = db.get_sessionmaker()
     with sessionmaker() as s:
         job = s.get(ScanJob, job_id)
         data_source = s.get(DataSource, job.data_source_id)
-        connector = build_connector(data_source, profile=job.profile)
+        detectors, pack_version = effective_detectors(s)
+        connector = build_connector(data_source, profile=job.profile,
+                                    detectors=detectors, pack_version=pack_version)
         run_job(s, job_id, connector)
     return "completed"
 
 
 @router.post("/data-sources/{data_source_id}/scans", status_code=202)
-def start_scan(data_source_id: uuid.UUID) -> dict:
+def start_scan(data_source_id: uuid.UUID, incremental: bool = False,
+               profile: str | None = None) -> dict:
+    """Start a scan. ``incremental=true`` skips units unchanged since the last scan and
+    carries their findings forward (SRS incremental scanning). ``profile`` overrides the
+    data source default (e.g. ``deep`` to enable NER)."""
     sessionmaker = db.get_sessionmaker()
     with sessionmaker() as s:
         ds = s.get(DataSource, data_source_id)
         if ds is None:
             raise HTTPException(status_code=404, detail="data source not found")
+        prof = ds.scan_profile_default
+        if profile:
+            from platform_db.enums import ScanProfile
+            try:
+                prof = ScanProfile(profile)
+            except ValueError:
+                raise HTTPException(status_code=400, detail=f"unknown profile {profile!r}")
         job = ScanJob(data_source_id=ds.id, application_id=ds.application_id,
-                      profile=ds.scan_profile_default, state=ScanState.QUEUED)
+                      profile=prof, state=ScanState.QUEUED, incremental=incremental)
         s.add(job)
         s.commit()
         job_id = job.id

@@ -77,6 +77,10 @@ class ScanJob(UUIDPKMixin, TimestampMixin, Base):
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     triggered_by: Mapped[uuid.UUID | None] = mapped_column(
         PgUUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    # Incremental: skip units whose content_hash is unchanged from the data source's
+    # previous scan and carry their findings forward (SRS incremental scanning).
+    incremental: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False,
+                                              server_default="false")
 
 
 class ScanUnit(UUIDPKMixin, TimestampMixin, Base):
@@ -93,6 +97,10 @@ class ScanUnit(UUIDPKMixin, TimestampMixin, Base):
         enums.scan_state_enum, nullable=False, default=enums.ScanState.QUEUED)
     rows_sampled: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # A change marker for incremental scans: when a unit's fingerprint is unchanged from
+    # the previous scan, the unit is skipped and its prior findings are carried forward
+    # (SRS incremental scanning). NULL means "no fingerprint / always rescan".
+    content_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
 
 class Finding(TimestampMixin, Base):

@@ -202,10 +202,14 @@ export const api = {
     http<InventoryRow>(`/applications/${id}/inventory/${category}`, {
       method: "PUT", body: JSON.stringify(body),
     }),
-  startScan: (dataSourceId: string) =>
-    http<{ job_id: string; state: string }>(`/data-sources/${dataSourceId}/scans`, {
-      method: "POST",
-    }),
+  startScan: (dataSourceId: string, opts?: { incremental?: boolean; profile?: string }) => {
+    const qs = new URLSearchParams();
+    if (opts?.incremental) qs.set("incremental", "true");
+    if (opts?.profile) qs.set("profile", opts.profile);
+    const tail = qs.toString() ? `?${qs.toString()}` : "";
+    return http<{ job_id: string; state: string }>(
+      `/data-sources/${dataSourceId}/scans${tail}`, { method: "POST" });
+  },
   scan: (jobId: string) => http<ScanJob>(`/scans/${jobId}`),
   dpiaRecords: (id: string) =>
     http<{ records: DpiaRecord[] }>(`/applications/${id}/dpia-records`),
@@ -257,6 +261,14 @@ export const api = {
     http<{ id: string }>("/admin/webhooks", { method: "POST", body: JSON.stringify(body) }),
   deleteWebhook: (id: string) =>
     http<void>(`/admin/webhooks/${id}`, { method: "DELETE" }),
+
+  // ── custom detectors (admin) ──────────────────────────────────────────────
+  customDetectors: () =>
+    http<CustomDetectorList>("/admin/detectors"),
+  createDetector: (body: CreateDetectorBody) =>
+    http<{ id: string }>("/admin/detectors", { method: "POST", body: JSON.stringify(body) }),
+  deleteDetector: (id: string) =>
+    http<void>(`/admin/detectors/${id}`, { method: "DELETE" }),
 
   // ── auth & admin ──────────────────────────────────────────────────────────
   login: (email: string, password: string) =>
@@ -328,6 +340,33 @@ export interface WebhookRow {
   event_types: string[];
   active: boolean;
   has_secret: boolean;
+}
+
+export interface CustomDetector {
+  id: string;
+  category: string;
+  tier: string;
+  pattern: string | null;
+  validator: string | null;
+  context_positive: string[];
+  context_negative: string[];
+}
+
+export interface CustomDetectorList {
+  validators: string[];
+  pack_active: boolean;
+  count: number;
+  detectors: CustomDetector[];
+}
+
+export interface CreateDetectorBody {
+  category: string;
+  tier: string;
+  pattern?: string | null;
+  validator?: string | null;
+  context_positive?: string[];
+  context_negative?: string[];
+  description?: string;
 }
 
 export type Role = "admin" | "dpo" | "owner" | "auditor" | "operator";

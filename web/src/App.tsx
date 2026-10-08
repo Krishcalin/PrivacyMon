@@ -7,6 +7,7 @@ import { DpiaRecords } from "./features/DpiaRecords";
 import { DpiaList, DpiaWorkspace } from "./features/Dpia";
 import { Inventory } from "./features/Inventory";
 import { Users } from "./features/Users";
+import { Detectors } from "./features/Detectors";
 import { Login } from "./features/Login";
 import { useAuth } from "./lib/auth";
 
@@ -31,6 +32,7 @@ function Sidebar() {
         <NavLink to="/" end>Dashboard</NavLink>
         <NavLink to="/applications">Applications</NavLink>
         {hasGlobal("admin") && <NavLink to="/users">Users &amp; roles</NavLink>}
+        {hasGlobal("admin") && <NavLink to="/detectors">Detectors</NavLink>}
       </nav>
       <div style={{ marginTop: "auto" }} />
       {user && (
@@ -77,6 +79,7 @@ export function App() {
           <Route path="/applications/:id/dpias" element={<DpiaList />} />
           <Route path="/dpias/:dpiaId" element={<DpiaWorkspace />} />
           <Route path="/users" element={<Users />} />
+          <Route path="/detectors" element={<Detectors />} />
         </Routes>
       </main>
     </div>

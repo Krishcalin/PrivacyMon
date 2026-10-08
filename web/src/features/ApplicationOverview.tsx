@@ -36,8 +36,11 @@ export function ApplicationOverview() {
     },
   });
 
+  const [deep, setDeep] = useState(false);
+  const [incremental, setIncremental] = useState(false);
   const startScan = useMutation({
-    mutationFn: (dsId: string) => api.startScan(dsId),
+    mutationFn: (dsId: string) =>
+      api.startScan(dsId, { incremental, profile: deep ? "deep" : undefined }),
     onSuccess: (r) => setActiveJob(r.job_id),
   });
 
@@ -87,6 +90,14 @@ export function ApplicationOverview() {
           <div className="toolbar">
             <h2 style={{ margin: 0 }}>Data sources</h2>
             <div className="spacer" />
+            <label style={{ margin: 0, display: "flex", gap: 4, alignItems: "center", fontSize: 12, textTransform: "none" }}>
+              <input type="checkbox" style={{ width: "auto" }} checked={deep} onChange={(e) => setDeep(e.target.checked)} />
+              Deep (NER)
+            </label>
+            <label style={{ margin: 0, display: "flex", gap: 4, alignItems: "center", fontSize: 12, textTransform: "none" }}>
+              <input type="checkbox" style={{ width: "auto" }} checked={incremental} onChange={(e) => setIncremental(e.target.checked)} />
+              Incremental
+            </label>
             <button onClick={() => setAdding(true)}>Add source</button>
           </div>
           {sources.data && sources.data.data_sources.length > 0 ? (
@@ -225,17 +236,26 @@ function ChangesPanel({ appId }: { appId: string }) {
   );
 }
 
+// Per-kind connection shape + the field label/placeholder for the one free-text input.
+const SOURCE_KINDS: Record<string, { label: string; field: string; placeholder: string; build: (v: string) => Record<string, unknown> }> = {
+  git: { label: "Git repository", field: "Repository path (reachable by the worker)", placeholder: "/app/fixtures/repo", build: (v) => ({ path: v }) },
+  filesystem: { label: "File share / directory", field: "Mounted path (SMB/NFS/export dir)", placeholder: "/mnt/share/exports", build: (v) => ({ path: v }) },
+  openapi: { label: "OpenAPI / Swagger spec", field: "Spec URL or path", placeholder: "https://api.example.com/openapi.json", build: (v) => ({ url: v }) },
+  postgres: { label: "PostgreSQL database", field: "Connection DSN", placeholder: "postgresql://user:pass@host:5432/db", build: (v) => ({ dsn: v }) },
+};
+
 function AddSource({ appId, onClose }: { appId: string; onClose: () => void }) {
   const [kind, setKind] = useState("git");
   const [name, setName] = useState("");
   const [locator, setLocator] = useState("");
+  const spec = SOURCE_KINDS[kind];
 
   const mutation = useMutation({
     mutationFn: () =>
       api.addDataSource(appId, {
         kind,
-        display_name: name.trim() || (kind === "git" ? "repository" : "database"),
-        connection: kind === "git" ? { path: locator } : { dsn: locator },
+        display_name: name.trim() || spec.label.toLowerCase(),
+        connection: spec.build(locator.trim()),
       }),
     onSuccess: onClose,
   });
@@ -246,14 +266,13 @@ function AddSource({ appId, onClose }: { appId: string; onClose: () => void }) {
         <h2>Add data source</h2>
         <label>Kind</label>
         <select value={kind} onChange={(e) => setKind(e.target.value)}>
-          <option value="git">Git repository</option>
-          <option value="postgres">PostgreSQL database</option>
+          {Object.entries(SOURCE_KINDS).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
         </select>
         <label>Display name</label>
         <input value={name} onChange={(e) => setName(e.target.value)} placeholder="app repo" />
-        <label>{kind === "git" ? "Repository path (reachable by the worker)" : "Connection DSN"}</label>
+        <label>{spec.field}</label>
         <input className="mono" value={locator} onChange={(e) => setLocator(e.target.value)}
-          placeholder={kind === "git" ? "/app/fixtures/repo" : "postgresql://user:pass@host:5432/db"} />
+          placeholder={spec.placeholder} />
         {mutation.isError && <p style={{ color: "var(--crit)" }}>{(mutation.error as Error).message}</p>}
         <div className="row" style={{ marginTop: 18, justifyContent: "flex-end" }}>
           <button onClick={onClose}>Cancel</button>

@@ -43,9 +43,27 @@ def test_postgres_without_a_dsn_is_a_clear_error():
         build_connector(_DataSource(DataSourceKind.POSTGRES, {}))
 
 
-def test_unimplemented_kind_is_reported():
-    with pytest.raises(NotImplementedError):
-        build_connector(_DataSource(DataSourceKind.OPENAPI, {"dsn": "x"}))
+def test_openapi_connector_is_built_from_url():
+    from worker.connectors.openapi import OpenApiConnector
+    c = build_connector(_DataSource(DataSourceKind.OPENAPI,
+                                    {"url": "https://api.example.com/openapi.json"}))
+    assert isinstance(c, OpenApiConnector)
+
+
+def test_openapi_without_a_source_is_a_clear_error():
+    with pytest.raises(ValueError, match="connection.url"):
+        build_connector(_DataSource(DataSourceKind.OPENAPI, {}))
+
+
+def test_filesystem_connector_is_built_from_path():
+    from worker.connectors.filesystem import FilesystemConnector
+    c = build_connector(_DataSource(DataSourceKind.FILESYSTEM, {"path": "/mnt/share"}))
+    assert isinstance(c, FilesystemConnector)
+
+
+def test_filesystem_without_a_path_is_a_clear_error():
+    with pytest.raises(ValueError, match="connection.path"):
+        build_connector(_DataSource(DataSourceKind.FILESYSTEM, {}))
 
 
 def test_postgres_target_builds_dsn_from_parts_and_encrypted_credential(monkeypatch):

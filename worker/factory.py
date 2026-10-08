@@ -16,7 +16,9 @@ from dpia_core.models import ScanProfile
 from platform_db import crypto
 from platform_db.enums import DataSourceKind
 from worker.connectors.base import Connector
+from worker.connectors.filesystem import FilesystemConnector
 from worker.connectors.git import GitConnector
+from worker.connectors.openapi import OpenApiConnector
 from worker.connectors.postgres import PostgresConnector
 from worker.connectors.sql import SqlConnector
 
@@ -64,24 +66,43 @@ def _sql_url(kind: DataSourceKind, conn: dict, credential_ref: str | None):
                      port=port, database=database)
 
 
-def build_connector(data_source, *, profile: ScanProfile = ScanProfile.STANDARD
-                    ) -> Connector:
+def build_connector(data_source, *, profile: ScanProfile = ScanProfile.STANDARD,
+                    detectors=None, pack_version: str | None = None) -> Connector:
+    """Build the connector for a data source. ``detectors``/``pack_version`` override the
+    built-in pack (the pipeline passes the merged built-in + custom chain here, SRS
+    FR-4.7); when omitted, each connector falls back to ``default_detectors()``."""
     kind = data_source.kind
     conn = data_source.connection or {}
     credential_ref = getattr(data_source, "credential_ref", None)
     presence_only = bool(conn.get("presence_only"))
+    # Only pass detector overrides when supplied, so each connector keeps its own default.
+    det: dict = {}
+    if detectors is not None:
+        det["detectors"] = detectors
+    if pack_version is not None:
+        det["pack_version"] = pack_version
 
     if kind == DataSourceKind.GIT:
         path = conn.get("path")
         if not path:
             raise ValueError("git data source requires connection.path")
-        return GitConnector(path)
+        return GitConnector(path, profile=profile, **det)
+    if kind == DataSourceKind.FILESYSTEM:
+        path = conn.get("path")
+        if not path:
+            raise ValueError("filesystem data source requires connection.path")
+        return FilesystemConnector(path, profile=profile, presence_only=presence_only, **det)
+    if kind == DataSourceKind.OPENAPI:
+        source = conn.get("url") or conn.get("path") or conn.get("spec")
+        if not source:
+            raise ValueError("openapi data source requires connection.url or connection.path")
+        return OpenApiConnector(source, profile=profile, presence_only=presence_only, **det)
     if kind == DataSourceKind.POSTGRES:
         return PostgresConnector(
             _postgres_dsn(conn, credential_ref), profile=profile,
-            presence_only=presence_only)
+            presence_only=presence_only, **det)
     if kind in _SQL_DRIVERS:
         return SqlConnector(
             _sql_url(kind, conn, credential_ref), profile=profile,
-            presence_only=presence_only)
+            presence_only=presence_only, **det)
     raise NotImplementedError(f"no connector for data source kind {kind!r}")

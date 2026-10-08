@@ -54,6 +54,7 @@ class GitConnector:
         ignore: IgnoreRules | None = None,
         max_file_bytes: int = _DEFAULT_MAX_FILE_BYTES,
         cloner: Callable[..., str] | None = None,
+        profile: ScanProfile = ScanProfile.STANDARD,
     ):
         self.root = os.path.abspath(root)
         self.detectors = detectors if detectors is not None else default_detectors()
@@ -61,6 +62,7 @@ class GitConnector:
         self.ignore = ignore if ignore is not None else IgnoreRules.from_root(self.root)
         self.max_file_bytes = max_file_bytes
         self._cloner = cloner
+        self.profile = profile
 
     # ── SDK contract ─────────────────────────────────────────────────────────
     def test(self) -> ConnectorTest:
@@ -88,6 +90,15 @@ class GitConnector:
             return []
         findings = self._scan_values(unit.key, text) + self._scan_identifiers(unit.key, text)
         return apply_cooccurrence(findings)
+
+    def fingerprint(self, unit: ScanUnit) -> str | None:
+        """A cheap change marker (size + mtime) for incremental scans; None if unknown."""
+        abspath = unit.meta.get("abs") or os.path.join(self.root, unit.key)
+        try:
+            st = os.stat(abspath)
+        except OSError:
+            return None
+        return f"{st.st_size}:{int(st.st_mtime)}"
 
     # ── convenience ──────────────────────────────────────────────────────────
     def scan_all(self) -> list[Finding]:
@@ -130,7 +141,7 @@ class GitConnector:
                 continue
             findings.extend(evaluate_text(
                 self.detectors, line, path=rel_path, line=lineno,
-                pack_version=self.pack_version))
+                pack_version=self.pack_version, profile=self.profile))
         return findings
 
     def _scan_identifiers(self, rel_path: str, text: str) -> list[Finding]:

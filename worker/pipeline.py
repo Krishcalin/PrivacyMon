@@ -43,6 +43,53 @@ def _partition_name(job_id: uuid.UUID) -> str:
     return f"findings_p_{job_id.hex}"
 
 
+def _prior_unit_hashes(session: Session, data_source_id: uuid.UUID,
+                       this_job: uuid.UUID) -> dict[str, tuple[str, uuid.UUID]]:
+    """Map each unit locator from the data source's PREVIOUS completed scan to its
+    (content_hash, scan_job_id). Used to decide which units an incremental scan can skip."""
+    ds = session.get(DataSource, data_source_id)
+    prev_job = getattr(ds, "last_scan_job_id", None) if ds else None
+    if not prev_job or prev_job == this_job:
+        return {}
+    rows = session.execute(
+        select(ScanUnit.locator, ScanUnit.content_hash).where(
+            ScanUnit.scan_job_id == prev_job,
+            ScanUnit.state == ScanState.COMPLETED,
+            ScanUnit.content_hash.isnot(None))).all()
+    return {loc: (h, prev_job) for (loc, h) in rows}
+
+
+def _carry_forward_findings(session: Session, prev_job: uuid.UUID,
+                            this_job: uuid.UUID, new_unit_id: uuid.UUID) -> int:
+    """Copy a unit's findings from the previous scan's partition into this scan's, so a
+    skipped (unchanged) unit still contributes to the inventory. Returns the count.
+
+    ``new_unit_id`` is this job's scan_units row (it carries the unit locator); the prior
+    findings are matched by that locator in the previous job."""
+    locator = session.execute(
+        select(ScanUnit.locator).where(ScanUnit.id == new_unit_id)).scalar()
+    prev_unit = session.execute(
+        select(ScanUnit.id).where(ScanUnit.scan_job_id == prev_job,
+                                  ScanUnit.locator == locator)).scalar()
+    if prev_unit is None:
+        return 0
+    prior = session.query(FindingRow).filter(
+        FindingRow.scan_job_id == prev_job,
+        FindingRow.unit_id == prev_unit).all()
+    count = 0
+    for f in prior:
+        session.add(FindingRow(
+            scan_job_id=this_job, application_id=f.application_id,
+            data_source_id=f.data_source_id, unit_id=new_unit_id,
+            category=f.category, tier=f.tier, confidence=f.confidence,
+            hit_rate=f.hit_rate, locator=f.locator, protection_state=f.protection_state,
+            combined_identity=f.combined_identity, evidence=list(f.evidence or []),
+            detector_id=f.detector_id, pack_version=f.pack_version,
+            review_state=f.review_state, suppression_id=f.suppression_id))
+        count += 1
+    return count
+
+
 def _load_suppressions(session: Session, application_id: uuid.UUID) -> list[Suppression]:
     """Active (non-expired) suppressions for an application — loaded once per scan so a
     reviewer's suppression persists across future scans (SRS FR-4.6)."""
@@ -127,6 +174,12 @@ def run_job(session: Session, job_id: uuid.UUID, connector: Connector, *, now=No
     # so a reviewer's decision carries across every future scan (SRS FR-4.6).
     suppressions = _load_suppressions(session, application_id)
 
+    # Incremental: the previous scan's per-unit fingerprints, so an unchanged unit can be
+    # skipped and its findings carried forward rather than re-scanned.
+    fingerprint = getattr(connector, "fingerprint", None)
+    prior_hashes = _prior_unit_hashes(session, data_source_id, job.id) \
+        if (job.incremental and fingerprint is not None) else {}
+
     units_done = len(done)
     findings_total = job.findings_count or 0
     stopped_state: ScanState | None = None
@@ -140,10 +193,25 @@ def run_job(session: Session, job_id: uuid.UUID, connector: Connector, *, now=No
         if unit.key in done:
             continue
         started = clock()
+        fp = fingerprint(unit) if fingerprint is not None else None
         su = ScanUnit(scan_job_id=job.id, kind=unit.kind, locator=unit.key,
-                      state=ScanState.RUNNING)
+                      state=ScanState.RUNNING, content_hash=fp)
         session.add(su)
         session.flush()
+
+        prior = prior_hashes.get(unit.key)
+        if prior and fp is not None and prior[0] == fp:
+            # Unchanged since the last scan: carry its findings forward, don't re-scan.
+            carried = _carry_forward_findings(session, prior[1], job.id, su.id)
+            su.state = ScanState.COMPLETED
+            su.duration_ms = max(0, (clock() - started) * 1000)
+            units_done += 1
+            findings_total += carried
+            job.units_done = units_done
+            job.findings_count = findings_total
+            session.commit()
+            continue
+
         findings = connector.scan_unit(unit)
         for f in findings:
             locator = f.locator.as_dict()
