@@ -7,7 +7,7 @@ PostgreSQL, Redis and Celery are provisioned.
 """
 from __future__ import annotations
 
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, Query, Response
 from pydantic import BaseModel, Field
 
 import dpia_core
@@ -15,6 +15,7 @@ from dpia_core.controls import CONTROL_LIBRARY, QUESTIONNAIRE
 from dpia_core.detectors import DEFAULT_PACK_VERSION, default_detectors
 from dpia_core.engine import evaluate_column, visible_findings
 
+from . import db
 from .settings import settings
 
 app = FastAPI(
@@ -33,10 +34,14 @@ def healthz() -> dict:
 
 
 @app.get(f"{P}/readyz")
-def readyz() -> dict:
-    # Phase 1 has no external deps; readiness is trivially true. Later this
-    # checks PostgreSQL and Redis (SRS 9 /readyz).
-    return {"status": "ready", "checks": {"dpia_core": "ok"}}
+def readyz(response: Response) -> dict:
+    """Readiness: PostgreSQL reachable (SRS 9 /readyz). Returns 503 when the platform
+    database is unavailable so an orchestrator holds traffic until it is."""
+    ok, detail = db.db_ok()
+    if not ok:
+        response.status_code = 503
+    return {"status": "ready" if ok else "degraded",
+            "checks": {"dpia_core": "ok", "database": detail}}
 
 
 @app.get(f"{P}/version")
@@ -127,3 +132,30 @@ def detectors_test(req: DetectorTestRequest) -> dict:
         "finding_count": len(shown),
         "findings": [f.as_dict() for f in shown],
     }
+
+
+@app.get(f"{P}/applications")
+def applications() -> dict:
+    """List registered applications from the platform DB (SRS 9: GET /applications).
+
+    A first database-backed resource proving the app↔db wiring; the full registry CRUD,
+    scoping and OIDC auth land with the auth slice.
+    """
+    from platform_db.models.registry import Application
+
+    sessionmaker = db.get_sessionmaker()
+    with sessionmaker() as s:
+        rows = s.query(Application).order_by(Application.created_at).all()
+        return {
+            "count": len(rows),
+            "applications": [
+                {
+                    "id": str(a.id),
+                    "name": a.name,
+                    "environment": a.environment.value if a.environment else None,
+                    "lifecycle": a.lifecycle.value if a.lifecycle else None,
+                    "internet_facing": a.internet_facing,
+                }
+                for a in rows
+            ],
+        }

@@ -9,10 +9,11 @@ from __future__ import annotations
 import uuid
 from collections.abc import Iterable
 
-from sqlalchemy import text
+from sqlalchemy import Engine, create_engine, text
 from sqlalchemy.ext.asyncio import (
     AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine,
 )
+from sqlalchemy.orm import Session, sessionmaker
 
 from platform_db.ddl import SESSION_VAR_APP_IDS, SESSION_VAR_BYPASS
 
@@ -22,6 +23,24 @@ def normalise_async_url(url: str) -> str:
     if url.startswith("postgresql://"):
         return "postgresql+psycopg://" + url[len("postgresql://"):]
     return url
+
+
+def normalise_sync_url(url: str) -> str:
+    """Point a URL at the SYNC psycopg 3 driver (the worker and Alembic use sync)."""
+    if url.startswith("postgresql://"):
+        return "postgresql+psycopg://" + url[len("postgresql://"):]
+    # a +asyncpg/+psycopg_async URL would be wrong for a sync engine; leave psycopg as-is
+    return url
+
+
+def make_sync_engine(url: str, *, echo: bool = False, pool_size: int = 5) -> Engine:
+    """A synchronous psycopg 3 engine — for the worker/pipeline and scripts."""
+    return create_engine(normalise_sync_url(url), echo=echo, pool_size=pool_size,
+                         pool_pre_ping=True)
+
+
+def make_sync_sessionmaker(engine: Engine) -> sessionmaker[Session]:
+    return sessionmaker(engine, expire_on_commit=False, class_=Session)
 
 
 def make_engine(url: str, *, echo: bool = False, pool_size: int = 5) -> AsyncEngine:
