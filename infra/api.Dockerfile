@@ -23,7 +23,7 @@ RUN pip install --no-cache-dir \
     "sqlalchemy[asyncio]>=2.0" "alembic>=1.13" "psycopg[binary]>=3.1" \
     "celery>=5.3" "redis>=5.0" "cryptography>=42.0" \
     "PyMySQL>=1.1" "oracledb>=2.0" "pymssql>=2.3" \
-    "weasyprint>=60" "python-docx>=1.1" \
+    "weasyprint>=60" "python-docx>=1.1" "PyJWT>=2.8" \
     "structlog>=24.1" "python-multipart>=0.0.9" "GitPython>=3.1" "PyYAML>=6.0"
 
 # The engine, persistence layer, worker (connectors + pipeline) and API.

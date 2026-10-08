@@ -7,7 +7,7 @@ PostgreSQL, Redis and Celery are provisioned.
 """
 from __future__ import annotations
 
-from fastapi import FastAPI, Query, Response
+from fastapi import Depends, FastAPI, Query, Response
 from pydantic import BaseModel, Field
 
 import dpia_core
@@ -15,7 +15,7 @@ from dpia_core.controls import CONTROL_LIBRARY, QUESTIONNAIRE
 from dpia_core.detectors import DEFAULT_PACK_VERSION, default_detectors
 from dpia_core.engine import evaluate_column, visible_findings
 
-from . import assessment, console, db, dpia, report, scans
+from . import assessment, auth, console, db, dpia, report, scans
 from .settings import settings
 
 app = FastAPI(
@@ -27,15 +27,23 @@ app = FastAPI(
 
 P = settings.api_prefix
 
-# Scan control + progress endpoints (SRS 9): start, status, pause/resume/cancel, SSE.
-app.include_router(scans.router)
-# Console-backing endpoints (SRS 9/10): registry, findings, inventory, dashboard.
-app.include_router(console.router)
-# DPIA processing-record endpoints (the 30-field DPDP sheet).
-app.include_router(dpia.router)
-# DPIA assessment workflow + report (SRS 3.6 / 5 / 9).
-app.include_router(assessment.router)
-app.include_router(report.router)
+# Authentication (login / me / admin users) — public login, the rest self-guarded.
+app.include_router(auth.router)
+
+# Everything below requires a valid session (SRS 11.1). The per-endpoint
+# Depends(current_user) used for scoping resolves to the SAME cached principal.
+_auth = [Depends(auth.current_user)]
+app.include_router(scans.router, dependencies=_auth)
+app.include_router(console.router, dependencies=_auth)
+app.include_router(dpia.router, dependencies=_auth)
+app.include_router(assessment.router, dependencies=_auth)
+app.include_router(report.router, dependencies=_auth)
+
+
+@app.on_event("startup")
+def _startup() -> None:
+    # Create the first administrator once, from the environment (no default credential).
+    auth.bootstrap_admin()
 
 
 @app.get(f"{P}/healthz")

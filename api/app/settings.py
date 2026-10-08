@@ -24,6 +24,13 @@ class Settings:
     # Redis; "inline" runs the pipeline in the request (dev / no broker).
     scan_mode: str = os.getenv("PRIVACYMON_SCAN_MODE", "inline")
     broker_url: str = os.getenv("PRIVACYMON_BROKER_URL", "redis://localhost:6379/0")
+    # Auth: JWT signing secret, and the NON-superuser role the API uses for scoped
+    # reads so row-level security is actually enforced (owners see only their apps).
+    jwt_secret: str = os.getenv("PRIVACYMON_JWT_SECRET", "dev-insecure-change-me")
+    app_database_url: str = os.getenv(
+        "PRIVACYMON_APP_DB_URL",
+        os.getenv("PRIVACYMON_DB_URL",
+                  "postgresql+psycopg://privacymon:privacymon@localhost:5432/privacymon"))
     # Confidence thresholds (SRS 4.4); overridable per deployment.
     likely_threshold: float = float(os.getenv("PRIVACYMON_LIKELY", "0.80"))
     review_threshold: float = float(os.getenv("PRIVACYMON_REVIEW", "0.50"))

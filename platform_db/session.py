@@ -52,6 +52,25 @@ def make_sessionmaker(engine: AsyncEngine) -> async_sessionmaker[AsyncSession]:
     return async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
 
 
+def set_rls_context_sync(
+    session: Session,
+    application_ids: Iterable[uuid.UUID | str] | None,
+    *,
+    bypass: bool = False,
+) -> None:
+    """Synchronous twin of :func:`set_rls_context` (for the API's sync sessions).
+
+    Sets the two row-level-security GUCs LOCAL to the transaction, so an owner's query,
+    run as the non-superuser ``privacymon_app`` role, is scoped to exactly these
+    application ids (or everything, when ``bypass`` is set for a global role).
+    """
+    ids = ",".join(str(a) for a in (application_ids or []))
+    session.execute(text("SELECT set_config(:k, :v, true)"),
+                    {"k": SESSION_VAR_APP_IDS, "v": ids})
+    session.execute(text("SELECT set_config(:k, :v, true)"),
+                    {"k": SESSION_VAR_BYPASS, "v": "on" if bypass else "off"})
+
+
 async def set_rls_context(
     session: AsyncSession,
     application_ids: Iterable[uuid.UUID | str] | None,

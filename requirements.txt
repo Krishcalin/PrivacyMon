@@ -8,6 +8,7 @@ uvicorn[standard]>=0.29
 pydantic>=2.6
 python-multipart>=0.0.9
 structlog>=24.1
+PyJWT>=2.8                   # JWT sessions (local auth)
 
 # --- persistence / queue ---
 SQLAlchemy>=2.0

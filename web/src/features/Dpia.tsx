@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { api } from "../lib/api";
+import { api, fetchReport } from "../lib/api";
 
 const ANSWERS = ["", "yes", "partial", "no", "na"];
 const ANSWER_LABEL: Record<string, string> = {
@@ -92,9 +92,9 @@ export function DpiaWorkspace() {
         <h1 style={{ margin: 0 }}>DPIA — {d.application_name}</h1>
         <span className="chip gray">{d.state}</span>
         <div className="spacer" />
-        <a className="btn" href={api.reportUrl(dpiaId, "html")} target="_blank" rel="noreferrer">HTML</a>
-        <a className="btn" href={api.reportUrl(dpiaId, "pdf")}>PDF</a>
-        <a className="btn" href={api.reportUrl(dpiaId, "docx")}>DOCX</a>
+        <button className="btn" onClick={() => fetchReport(dpiaId, "html")}>HTML</button>
+        <button className="btn" onClick={() => fetchReport(dpiaId, "pdf")}>PDF</button>
+        <button className="btn" onClick={() => fetchReport(dpiaId, "docx")}>DOCX</button>
       </div>
 
       <div className="grid cols-4" style={{ marginBottom: 16 }}>

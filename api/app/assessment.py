@@ -10,14 +10,14 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import delete, select, text
 
 from dpia_core.controls import QUESTIONNAIRE, effectiveness_question_keys
 from dpia_core.models import Tier
 from dpia_core.risk import CategoryExposure, ExposureInputs, compute_risk
-from platform_db.enums import Answer, DpiaState, RiskBand, RiskStatus, Treatment
+from platform_db.enums import Answer, DpiaState, RiskBand, Role, RiskStatus, Treatment
 from platform_db.models.assessment import (
     DpiaAssessment, DpiaComment, DpiaTransition, QuestionnaireResponse, Risk,
 )
@@ -25,6 +25,7 @@ from platform_db.models.registry import Application
 from platform_db.models.scanning import Inventory
 
 from . import db
+from .auth import Principal, current_user
 from .settings import settings
 
 router = APIRouter(prefix=settings.api_prefix)
@@ -269,7 +270,13 @@ def recompute_dpia(dpia_id: uuid.UUID) -> dict:
 
 
 @router.post("/dpias/{dpia_id}/transition")
-def transition_dpia(dpia_id: uuid.UUID, body: TransitionBody) -> dict:
+def transition_dpia(dpia_id: uuid.UUID, body: TransitionBody,
+                    user: Principal = Depends(current_user)) -> dict:
+    # Approving and publishing a DPIA is a DPO/Admin act (SRS 2.2).
+    if body.to in (DpiaState.APPROVED, DpiaState.PUBLISHED) and not user.has_global(
+            Role.DPO.value, Role.ADMIN.value):
+        raise HTTPException(status_code=403,
+                            detail="only a DPO or Admin can approve or publish a DPIA")
     with db.get_sessionmaker()() as s:
         d = _get_dpia(s, dpia_id)
         if body.to not in _TRANSITIONS.get(d.state, set()):

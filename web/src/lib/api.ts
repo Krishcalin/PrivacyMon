@@ -2,11 +2,43 @@
 // (Vite proxy) and behind the web container's reverse proxy in the stack.
 const BASE = import.meta.env.VITE_API_BASE ?? "/api/v1";
 
+// ── session token (JWT in localStorage) ───────────────────────────────────────
+const TOKEN_KEY = "privacymon.token";
+
+export function getToken(): string | null {
+  try {
+    return localStorage.getItem(TOKEN_KEY);
+  } catch {
+    return null;
+  }
+}
+
+export function setToken(token: string | null): void {
+  try {
+    if (token) localStorage.setItem(TOKEN_KEY, token);
+    else localStorage.removeItem(TOKEN_KEY);
+  } catch {
+    /* storage unavailable (private window) — session stays in memory only */
+  }
+}
+
+// Raised on a 401 so the shell can drop the stale token and show the login screen.
+export class Unauthorized extends Error {}
+
 async function http<T>(path: string, init?: RequestInit): Promise<T> {
+  const token = getToken();
   const res = await fetch(`${BASE}${path}`, {
-    headers: { "Content-Type": "application/json" },
     ...init,
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(init?.headers ?? {}),
+    },
   });
+  if (res.status === 401) {
+    setToken(null);
+    throw new Unauthorized("session expired — please sign in again");
+  }
   if (!res.ok) {
     let detail = res.statusText;
     try {
@@ -169,7 +201,80 @@ export const api = {
   dpiaRisks: (id: string) => http<{ risks: RiskRow[] }>(`/dpias/${id}/risks`),
   reportUrl: (id: string, format: "html" | "pdf" | "docx") =>
     `${BASE}/dpias/${id}/report?format=${format}`,
+
+  // ── auth & admin ──────────────────────────────────────────────────────────
+  login: (email: string, password: string) =>
+    http<LoginResponse>("/auth/login", {
+      method: "POST", body: JSON.stringify({ email, password }),
+    }),
+  me: () => http<Me>("/auth/me"),
+  users: () => http<{ count: number; users: AdminUser[] }>("/admin/users"),
+  createUser: (body: {
+    email: string; display_name?: string; password: string; global_role?: Role | null;
+  }) => http<{ id: string; email: string }>("/admin/users", {
+    method: "POST", body: JSON.stringify(body),
+  }),
+  setRoles: (userId: string, grants: { role: Role; application_id?: string | null }[]) =>
+    http<{ ok: boolean; grants: number }>(`/admin/users/${userId}/roles`, {
+      method: "PUT", body: JSON.stringify({ grants }),
+    }),
 };
+
+// A report is fetched with the Bearer header (a plain <a href> cannot send it),
+// then handed to the browser as a blob download / tab.
+export async function fetchReport(
+  id: string,
+  format: "html" | "pdf" | "docx",
+): Promise<void> {
+  const token = getToken();
+  const res = await fetch(`${BASE}/dpias/${id}/report?format=${format}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (res.status === 401) {
+    setToken(null);
+    throw new Unauthorized("session expired — please sign in again");
+  }
+  if (!res.ok) throw new Error(`report failed (${res.status})`);
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  if (format === "html") {
+    window.open(url, "_blank");
+  } else {
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `dpia-${id}.${format}`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  }
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
+}
+
+export type Role = "admin" | "dpo" | "owner" | "auditor" | "operator";
+
+export interface LoginResponse {
+  access_token: string;
+  token_type: string;
+  user: { email: string; display_name: string | null };
+}
+
+export interface Me {
+  user_id: string;
+  email: string;
+  display_name: string | null;
+  global_roles: Role[];
+  application_ids: string[];
+  is_global: boolean;
+}
+
+export interface AdminUser {
+  id: string;
+  email: string;
+  display_name: string | null;
+  active: boolean;
+  has_password: boolean;
+  roles: { role: Role; application_id: string | null }[];
+}
 
 export interface DpiaSummary {
   id: string;

@@ -32,6 +32,8 @@ class User(UUIDPKMixin, TimestampMixin, Base):
     email: Mapped[str] = mapped_column(String(320), nullable=False)
     display_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    # Local-auth password (PBKDF2); NULL for OIDC-provisioned users (SRS 11.1).
+    password_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
 
 class UserRole(UUIDPKMixin, TimestampMixin, Base):

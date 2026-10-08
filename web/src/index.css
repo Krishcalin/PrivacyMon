@@ -102,3 +102,53 @@ input, select, textarea { width: 100%; padding: 8px 10px; border: 1px solid var(
   box-shadow: 0 10px 40px rgba(15, 31, 61, .25); max-height: 84vh; overflow: auto; }
 .drawer { position: fixed; top: 0; right: 0; height: 100%; width: min(520px, 94vw);
   background: #fff; box-shadow: -8px 0 40px rgba(15,31,61,.2); padding: 22px; overflow: auto; z-index: 50; }
+
+/* ── authentication ──────────────────────────────────────────────────────── */
+.login-screen {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: var(--bg);
+}
+.login-card {
+  width: 100%;
+  max-width: 380px;
+  padding: 28px;
+}
+.login-error {
+  margin-top: 12px;
+  padding: 9px 11px;
+  border-radius: 8px;
+  background: #fbeae8;
+  color: var(--crit);
+  font-size: 13px;
+  border: 1px solid #f3c9c4;
+}
+.user-menu {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid rgba(255, 255, 255, 0.12);
+}
+.user-id {
+  display: flex;
+  flex-direction: column;
+  margin-bottom: 8px;
+}
+.user-name {
+  color: #fff;
+  font-weight: 600;
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.user-roles {
+  color: #8aa0c4;
+  font-size: 11px;
+  margin-top: 1px;
+}
+.chip.gray {
+  background: #eef2f8;
+  color: var(--muted);
+}

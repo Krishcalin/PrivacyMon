@@ -9,19 +9,34 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 
 from platform_db import crypto
 from platform_db.enums import (
-    DataSourceKind, Environment, Hosting, Lifecycle, ScanProfile, UserBase,
+    DataSourceKind, Environment, Hosting, Lifecycle, Role, ScanProfile, UserBase,
 )
+from platform_db.models.platform_tables import UserRole
 from platform_db.models.registry import Application, DataSource
 from platform_db.models.scanning import Finding, Inventory, ScanJob
 
 from . import db
+from .auth import Principal, current_user
 from .settings import settings
+
+
+def _grant_owner(s, user: Principal, application_id) -> None:
+    """Make the registering user the application Owner, so scoped reads show it to them."""
+    s.add(UserRole(user_id=user.user_id, role=Role.OWNER, application_id=application_id))
+
+
+def _assert_access(user: Principal, application_id) -> None:
+    import uuid as _uuid
+    if user.is_global:
+        return
+    if _uuid.UUID(str(application_id)) not in user.application_ids:
+        raise HTTPException(status_code=404, detail="application not found")
 
 router = APIRouter(prefix=settings.api_prefix)
 
@@ -97,14 +112,15 @@ def _source_dict(s: DataSource) -> dict:
 
 # ── applications ─────────────────────────────────────────────────────────────
 @router.get("/applications")
-def list_applications() -> dict:
-    with db.get_sessionmaker()() as s:
+def list_applications(user: Principal = Depends(current_user)) -> dict:
+    with db.scoped_session(user) as s:            # RLS: only the caller's applications
         rows = s.query(Application).order_by(Application.created_at).all()
         return {"count": len(rows), "applications": [_app_dict(a) for a in rows]}
 
 
 @router.post("/applications", status_code=201)
-def register_application(body: RegisterApplication) -> dict:
+def register_application(body: RegisterApplication,
+                         user: Principal = Depends(current_user)) -> dict:
     with db.get_sessionmaker()() as s:
         app = Application(
             name=body.name, description=body.description,
@@ -113,13 +129,16 @@ def register_application(body: RegisterApplication) -> dict:
             approx_records=body.approx_records, lifecycle=body.lifecycle,
             tags=body.tags)
         s.add(app)
+        s.flush()
+        _grant_owner(s, user, app.id)
         s.commit()
         return _app_dict(app)
 
 
 @router.get("/applications/{application_id}")
-def get_application(application_id: uuid.UUID) -> dict:
-    with db.get_sessionmaker()() as s:
+def get_application(application_id: uuid.UUID,
+                    user: Principal = Depends(current_user)) -> dict:
+    with db.scoped_session(user) as s:
         app = s.get(Application, application_id)
         if app is None:
             raise HTTPException(status_code=404, detail="application not found")
@@ -146,8 +165,9 @@ def get_application(application_id: uuid.UUID) -> dict:
 
 # ── data sources ─────────────────────────────────────────────────────────────
 @router.get("/applications/{application_id}/data-sources")
-def list_data_sources(application_id: uuid.UUID) -> dict:
-    with db.get_sessionmaker()() as s:
+def list_data_sources(application_id: uuid.UUID,
+                      user: Principal = Depends(current_user)) -> dict:
+    with db.scoped_session(user) as s:
         rows = s.query(DataSource).filter(
             DataSource.application_id == application_id).order_by(
             DataSource.created_at).all()
@@ -155,7 +175,9 @@ def list_data_sources(application_id: uuid.UUID) -> dict:
 
 
 @router.post("/applications/{application_id}/data-sources", status_code=201)
-def add_data_source(application_id: uuid.UUID, body: AddDataSource) -> dict:
+def add_data_source(application_id: uuid.UUID, body: AddDataSource,
+                    user: Principal = Depends(current_user)) -> dict:
+    _assert_access(user, application_id)
     with db.get_sessionmaker()() as s:
         if s.get(Application, application_id) is None:
             raise HTTPException(status_code=404, detail="application not found")
@@ -172,7 +194,8 @@ def add_data_source(application_id: uuid.UUID, body: AddDataSource) -> dict:
 
 # ── scan target registration + connectivity test ────────────────────────────
 @router.post("/scan-targets", status_code=201)
-def register_scan_target(body: RegisterScanTarget) -> dict:
+def register_scan_target(body: RegisterScanTarget,
+                         user: Principal = Depends(current_user)) -> dict:
     """Register a target application and its read-only database in one step.
 
     The read-only password is encrypted at rest and never returned; the stored
@@ -193,6 +216,7 @@ def register_scan_target(body: RegisterScanTarget) -> dict:
             tags=body.tags)
         s.add(app)
         s.flush()
+        _grant_owner(s, user, app.id)
         ds = DataSource(
             application_id=app.id, kind=body.kind,
             display_name=f"{body.host}:{body.port}/{body.database}",
@@ -232,8 +256,9 @@ def list_findings(
     min_confidence: float = 0.0,
     limit: int = Query(200, le=1000),
     offset: int = 0,
+    user: Principal = Depends(current_user),
 ) -> dict:
-    with db.get_sessionmaker()() as s:
+    with db.scoped_session(user) as s:
         q = s.query(Finding).filter(Finding.application_id == application_id)
         if category:
             q = q.filter(Finding.category == category)
@@ -260,8 +285,9 @@ def list_findings(
 
 # ── data inventory ───────────────────────────────────────────────────────────
 @router.get("/applications/{application_id}/inventory")
-def get_inventory(application_id: uuid.UUID) -> dict:
-    with db.get_sessionmaker()() as s:
+def get_inventory(application_id: uuid.UUID,
+                  user: Principal = Depends(current_user)) -> dict:
+    with db.scoped_session(user) as s:
         rows = s.query(Inventory).filter(
             Inventory.application_id == application_id).order_by(
             Inventory.category).all()
@@ -276,11 +302,11 @@ def get_inventory(application_id: uuid.UUID) -> dict:
 
 # ── portfolio dashboard ──────────────────────────────────────────────────────
 @router.get("/dashboard/portfolio")
-def portfolio() -> dict:
+def portfolio(user: Principal = Depends(current_user)) -> dict:
     """Aggregate for the dashboard: per-application category coverage + top tier,
-    portfolio totals, and a scan-coverage gauge."""
+    portfolio totals, and a scan-coverage gauge — scoped to the caller's applications."""
     _TIER_RANK = {"low": 0, "medium": 1, "high": 2, "critical": 3}
-    with db.get_sessionmaker()() as s:
+    with db.scoped_session(user) as s:
         apps = s.query(Application).order_by(Application.name).all()
         inv_rows = s.query(Inventory).all()
         by_app: dict[str, list] = {}
