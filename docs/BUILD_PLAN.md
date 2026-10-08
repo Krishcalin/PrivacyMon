@@ -158,3 +158,36 @@ heart of Discovery core and DPIA workflow — plus a minimal Foundation API.
 
 Validated live end to end: create → answer D/E/H/J → recompute (band + 6 gap risks) →
 transition to Published → download a valid PDF/DOCX/HTML, all through the console proxy.
+
+## Authentication, roles & RLS enforcement (option 2)
+
+**DONE.** Local username/password auth with signed-JWT sessions guards the whole API,
+and every data read runs as the non-superuser `privacymon_app` role so Postgres RLS
+scopes owners to their own applications (the DB-level enforcement the Foundation set up
+is now actually driven by the signed-in principal).
+
+- **Auth** (`api/app/auth.py`): PBKDF2-HMAC-SHA256 passwords (stdlib — no new native
+  dep), PyJWT HS256 bearer tokens (12 h), a `Principal` resolving global roles
+  (Admin/DPO/Auditor) and per-application roles (Owner/Operator), the `current_user`
+  dependency and a `require_global` guard, a one-time env-driven **admin bootstrap** on
+  an empty users table (no default credential), and the `/auth/login`, `/auth/me`,
+  `/admin/users` endpoints. An `idp_subject` column is reserved so an OIDC provider plugs
+  in later.
+- **Enforcement**: `main.py` guards the scans/console/dpia/assessment/report routers with
+  `Depends(current_user)`; `console.py` reads go through `db.scoped_session(principal)`
+  (the `privacymon_app` role + per-request RLS context), registering an application
+  auto-grants the caller **Owner**, and adding a data source asserts access; `assessment.py`
+  restricts **approve/publish** to a DPO or Admin.
+- **Scoped session** (`api/app/db.py` + `platform_db/session.py`): `scoped_session` opens
+  the restricted-role engine and `set_rls_context_sync` sets the signed-in principal's
+  application-id set as the RLS context for the request.
+- **Migration 0003**: `users.password_hash` (idempotent, offline-safe).
+- **Console**: a session provider (`web/src/lib/auth.tsx`), the Bearer header on every
+  API call with a 401 → login drop and a token-aware report download (`lib/api.ts`), a
+  **login screen**, a **Users & roles** admin screen (create users, edit the three global
+  roles) and a user menu + sign-out with role-aware navigation in the shell.
+
+Validated live on the Docker stack: unauthenticated request → 401; bootstrap-admin login
+→ JWT; an Owner sees only its own application (RLS fail-closed, a foreign application
+returns 404 with no existence leak) while the global Admin sees all; an Owner's
+approve → 403; a non-admin hitting `/admin/users` → 403; a bad password → 401.
