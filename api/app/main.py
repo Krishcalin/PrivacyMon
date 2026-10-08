@@ -15,7 +15,7 @@ from dpia_core.controls import CONTROL_LIBRARY, QUESTIONNAIRE
 from dpia_core.detectors import DEFAULT_PACK_VERSION, default_detectors
 from dpia_core.engine import evaluate_column, visible_findings
 
-from . import db, scans
+from . import console, db, scans
 from .settings import settings
 
 app = FastAPI(
@@ -29,6 +29,8 @@ P = settings.api_prefix
 
 # Scan control + progress endpoints (SRS 9): start, status, pause/resume/cancel, SSE.
 app.include_router(scans.router)
+# Console-backing endpoints (SRS 9/10): registry, findings, inventory, dashboard.
+app.include_router(console.router)
 
 
 @app.get(f"{P}/healthz")
@@ -137,28 +139,4 @@ def detectors_test(req: DetectorTestRequest) -> dict:
     }
 
 
-@app.get(f"{P}/applications")
-def applications() -> dict:
-    """List registered applications from the platform DB (SRS 9: GET /applications).
-
-    A first database-backed resource proving the app↔db wiring; the full registry CRUD,
-    scoping and OIDC auth land with the auth slice.
-    """
-    from platform_db.models.registry import Application
-
-    sessionmaker = db.get_sessionmaker()
-    with sessionmaker() as s:
-        rows = s.query(Application).order_by(Application.created_at).all()
-        return {
-            "count": len(rows),
-            "applications": [
-                {
-                    "id": str(a.id),
-                    "name": a.name,
-                    "environment": a.environment.value if a.environment else None,
-                    "lifecycle": a.lifecycle.value if a.lifecycle else None,
-                    "internet_facing": a.internet_facing,
-                }
-                for a in rows
-            ],
-        }
+# GET /applications and the rest of the registry live in console.py (included above).

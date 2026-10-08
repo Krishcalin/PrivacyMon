@@ -81,9 +81,19 @@ heart of Discovery core and DPIA workflow — plus a minimal Foundation API.
    pause/resume/cancel flip the job state the worker reads between units (resume skips
    completed units, never double-writing). Validated live end to end through the
    worker: Git scan 38 findings, sample-target Postgres scan 13.
-5. React SPA shell: portfolio dashboard, application registry, findings explorer
-   with the review actions (SRS section 10). **Not started** — the one remaining
-   Discovery-core item.
+5. ~~React SPA shell: portfolio dashboard, application registry, findings explorer
+   (SRS section 10).~~ **DONE** — `web/`: Vite + React 18 + TypeScript (strict) +
+   React Router 6 + TanStack Query, a typed API client, and a clean hand-written
+   design system. Screens: **portfolio dashboard** (stat tiles, scan-coverage gauge,
+   findings-by-tier bars, applications-by-exposure table, PII category heat map),
+   **application registry** with a register-application form, **application overview**
+   (attributes, data sources with add + scan and live progress polling, tier tiles),
+   and the **findings explorer** (faceted filters kept in the URL, masked-evidence
+   row drawer). Served by `web/Dockerfile` (nginx builds the SPA and reverse-proxies
+   `/api` to the API — same-origin, SSE-friendly). Backed by new console endpoints in
+   `api/app/console.py` (register/list applications, add/list data sources, findings,
+   inventory, portfolio aggregate). The SRS's shadcn/Recharts/OIDC polish and the
+   remaining §10 screens (DPIA workspace, risk register, reports, admin) are later work.
 6. ~~docker-compose dev stack wired end to end with a seeded sample target DB.~~
    **DONE** — `infra/api.Dockerfile` + `infra/worker.Dockerfile` + `infra/.env(.example)`;
    `docker compose -f infra/docker-compose.yml --profile full up` brings up Postgres,

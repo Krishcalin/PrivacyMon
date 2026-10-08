@@ -58,7 +58,8 @@ services:
   web:
     build: { context: ../web, dockerfile: Dockerfile }
     profiles: ["full"]
-    ports: ["5173:5173"]
+    ports: ["127.0.0.1:8099:80"]
+    depends_on: { api: { condition: service_started } }
 
   # Seeded target database with synthetic Indian PII for scanning demos.
   sample-target:
