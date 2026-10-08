@@ -40,6 +40,7 @@ class PostgresConnector:
         profile: ScanProfile = ScanProfile.STANDARD,
         sample_cap: int = _DEFAULT_SAMPLE_CAP,
         schemas_exclude: frozenset[str] = SYSTEM_SCHEMAS,
+        presence_only: bool = False,
         connect: Callable[[str], Any] | None = None,
     ):
         self.dsn = dsn
@@ -48,6 +49,12 @@ class PostgresConnector:
         self.profile = profile
         self.sample_cap = sample_cap if profile != ScanProfile.DEEP else max(sample_cap, 1000)
         self.schemas_exclude = schemas_exclude
+        # Presence-only: record WHICH columns hold WHICH category, never a value — not
+        # even a masked fragment leaves the target. Sampled values are read transiently
+        # to detect the pattern then discarded; only the column, category and presence
+        # metrics (confidence, hit rate) are kept. This is the mode the admin uses to
+        # assess a third-party application without extracting its data.
+        self.presence_only = presence_only
         self._connect = connect or _default_connect
 
     # ── SDK contract ─────────────────────────────────────────────────────────
@@ -104,6 +111,9 @@ class PostgresConnector:
                 self.detectors, col["name"], values,
                 data_type=col.get("data_type"), schema=schema, table=table,
                 profile=self.profile, pack_version=self.pack_version))
+        if self.presence_only:
+            for f in findings:
+                f.evidence = []          # record the presence, never a value fragment
         return apply_cooccurrence(findings)
 
     # ── grants (FR-2.5) ────────────────────────────────────────────────────────

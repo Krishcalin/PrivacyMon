@@ -61,3 +61,12 @@ def test_system_schemas_are_excluded_by_default():
 def test_deep_profile_raises_the_sample_cap():
     assert _connector(ScanProfile.DEEP).sample_cap >= 1000
     assert _connector(ScanProfile.STANDARD).sample_cap < 1000
+
+
+def test_presence_only_records_no_value_fragments():
+    # The scan-target mode: fields are detected, but no evidence (not even masked) kept.
+    c = PostgresConnector("postgresql://unused", presence_only=True,
+                          connect=lambda dsn: None)
+    findings = c._rows_to_findings("public", "customers", COLUMNS, ROWS)
+    assert findings and all(f.evidence == [] for f in findings)
+    assert {f.category for f in findings}  # categories still recorded (presence)

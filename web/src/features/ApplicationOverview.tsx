@@ -11,8 +11,14 @@ export function ApplicationOverview() {
   const [adding, setAdding] = useState(false);
   const [activeJob, setActiveJob] = useState<string | null>(null);
 
+  const [testResult, setTestResult] = useState<Record<string, string>>({});
   const app = useQuery({ queryKey: ["application", id], queryFn: () => api.application(id) });
   const sources = useQuery({ queryKey: ["sources", id], queryFn: () => api.dataSources(id) });
+
+  const testConn = useMutation({
+    mutationFn: (dsId: string) => api.testDataSource(dsId),
+    onSuccess: (r, dsId) => setTestResult((s) => ({ ...s, [dsId]: r.ok ? "✓ reachable" : `✗ ${r.detail}` })),
+  });
 
   // Poll the active scan until it reaches a terminal state, then refresh overview.
   useQuery({
@@ -85,18 +91,32 @@ export function ApplicationOverview() {
             <table>
               <thead><tr><th>Name</th><th>Kind</th><th /></tr></thead>
               <tbody>
-                {sources.data.data_sources.map((d) => (
-                  <tr key={d.id}>
-                    <td>{d.display_name}<div className="mono muted">{String(d.connection.path ?? d.connection.dsn ?? "")}</div></td>
-                    <td><span className="chip gray">{d.kind}</span></td>
-                    <td className="right">
-                      <button className="primary" disabled={startScan.isPending || !!activeJob}
-                        onClick={() => startScan.mutate(d.id)}>
-                        {activeJob ? "Scanning…" : "Scan"}
-                      </button>
-                    </td>
-                  </tr>
-                ))}
+                {sources.data.data_sources.map((d) => {
+                  const c = d.connection as Record<string, unknown>;
+                  const locator = c.path
+                    ? String(c.path)
+                    : c.host
+                      ? `${c.host}:${c.port ?? 5432}/${c.database ?? ""}`
+                      : String(c.dsn ?? "");
+                  return (
+                    <tr key={d.id}>
+                      <td>
+                        {d.display_name}
+                        {c.presence_only ? <span className="chip gray" style={{ marginLeft: 6 }}>presence-only</span> : null}
+                        <div className="mono muted">{locator}</div>
+                        {testResult[d.id] && <div className="muted" style={{ fontSize: 12 }}>{testResult[d.id]}</div>}
+                      </td>
+                      <td><span className="chip gray">{d.kind}</span></td>
+                      <td className="right">
+                        <button disabled={testConn.isPending} onClick={() => testConn.mutate(d.id)}>Test</button>{" "}
+                        <button className="primary" disabled={startScan.isPending || !!activeJob}
+                          onClick={() => startScan.mutate(d.id)}>
+                          {activeJob ? "Scanning…" : "Scan"}
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           ) : (

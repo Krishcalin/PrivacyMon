@@ -13,6 +13,7 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 
+from platform_db import crypto
 from platform_db.enums import (
     DataSourceKind, Environment, Hosting, Lifecycle, ScanProfile, UserBase,
 )
@@ -45,6 +46,30 @@ class AddDataSource(BaseModel):
     credential_ref: str | None = None
     scan_profile_default: ScanProfile = ScanProfile.STANDARD
     schedule_cron: str | None = None
+
+
+class RegisterScanTarget(BaseModel):
+    """Register a target application and its read-only database in one step.
+
+    The admin provides the application name and the target's connection and read-only
+    credentials. The password is encrypted at rest (never stored or returned in clear);
+    ``presence_only`` (default true) records which columns hold which PII category, never
+    a value.
+    """
+
+    name: str = Field(..., min_length=1, max_length=200)
+    environment: Environment = Environment.PROD
+    hosting: Hosting = Hosting.ON_PREM
+    internet_facing: bool = False
+    kind: DataSourceKind = DataSourceKind.POSTGRES
+    host: str = Field(..., min_length=1)          # IP address or hostname
+    port: int = 5432
+    database: str = Field(..., min_length=1)
+    username: str = Field(..., min_length=1)
+    password: str = Field(..., min_length=1)
+    scan_profile: ScanProfile = ScanProfile.STANDARD
+    presence_only: bool = True
+    tags: list[str] = Field(default_factory=list)
 
 
 # ── serialisers ──────────────────────────────────────────────────────────────
@@ -143,6 +168,58 @@ def add_data_source(application_id: uuid.UUID, body: AddDataSource) -> dict:
         s.add(ds)
         s.commit()
         return _source_dict(ds)
+
+
+# ── scan target registration + connectivity test ────────────────────────────
+@router.post("/scan-targets", status_code=201)
+def register_scan_target(body: RegisterScanTarget) -> dict:
+    """Register a target application and its read-only database in one step.
+
+    The read-only password is encrypted at rest and never returned; the stored
+    connection holds only host/port/database/username and the presence-only flag.
+    """
+    connection = {
+        "host": body.host, "port": body.port, "database": body.database,
+        "username": body.username, "presence_only": body.presence_only,
+    }
+    try:
+        credential_ref = crypto.encrypt_secret(body.password)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=f"credential vault unavailable: {e}")
+    with db.get_sessionmaker()() as s:
+        app = Application(
+            name=body.name, environment=body.environment, hosting=body.hosting,
+            internet_facing=body.internet_facing, lifecycle=Lifecycle.ACTIVE,
+            tags=body.tags)
+        s.add(app)
+        s.flush()
+        ds = DataSource(
+            application_id=app.id, kind=body.kind,
+            display_name=f"{body.host}:{body.port}/{body.database}",
+            connection=connection, credential_ref=credential_ref,
+            scan_profile_default=body.scan_profile)
+        s.add(ds)
+        s.commit()
+        return {
+            "application_id": str(app.id), "data_source_id": str(ds.id),
+            "application": _app_dict(app), "data_source": _source_dict(ds),
+        }
+
+
+@router.post("/data-sources/{data_source_id}/test")
+def test_data_source(data_source_id: uuid.UUID) -> dict:
+    """Connectivity test (FR-2.6): resolve the credential, open a read-only connection,
+    and probe it. Never returns the credential."""
+    with db.get_sessionmaker()() as s:
+        ds = s.get(DataSource, data_source_id)
+        if ds is None:
+            raise HTTPException(status_code=404, detail="data source not found")
+    from worker.factory import build_connector
+    try:
+        result = build_connector(ds).test()
+        return {"ok": result.ok, "detail": result.detail}
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "detail": str(e)}
 
 
 # ── findings explorer ────────────────────────────────────────────────────────

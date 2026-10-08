@@ -46,3 +46,18 @@ def test_postgres_without_a_dsn_is_a_clear_error():
 def test_unimplemented_kind_is_reported():
     with pytest.raises(NotImplementedError):
         build_connector(_DataSource(DataSourceKind.ORACLE, {"dsn": "x"}))
+
+
+def test_postgres_target_builds_dsn_from_parts_and_encrypted_credential(monkeypatch):
+    from platform_db import crypto
+    key = crypto.new_master_key()
+    monkeypatch.setenv("PRIVACYMON_MASTER_KEY", key)
+    ref = crypto.encrypt_secret("ro-pass", key=key)
+    ds = _DataSource(DataSourceKind.POSTGRES, {
+        "host": "10.0.0.5", "port": 5432, "database": "appdb",
+        "username": "scan_ro", "presence_only": True})
+    ds.credential_ref = ref
+    c = build_connector(ds)
+    assert isinstance(c, PostgresConnector)
+    assert c.presence_only is True
+    assert c.dsn == "postgresql://scan_ro:ro-pass@10.0.0.5:5432/appdb"

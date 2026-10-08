@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { api } from "../lib/api";
 
 const ENVIRONMENTS = ["prod", "uat", "dev"];
@@ -10,6 +10,7 @@ const LIFECYCLES = ["draft", "active", "decommissioned"];
 
 export function Applications() {
   const [showForm, setShowForm] = useState(false);
+  const [showTarget, setShowTarget] = useState(false);
   const { data, isLoading } = useQuery({ queryKey: ["applications"], queryFn: api.applications });
 
   return (
@@ -17,7 +18,8 @@ export function Applications() {
       <div className="toolbar">
         <h1 style={{ margin: 0 }}>Applications</h1>
         <div className="spacer" />
-        <button className="primary" onClick={() => setShowForm(true)}>Register application</button>
+        <button onClick={() => setShowForm(true)}>Register application</button>
+        <button className="primary" onClick={() => setShowTarget(true)}>Register scan target</button>
       </div>
       <p className="crumbs">Every application assessed under the DPDP Act 2023 is registered here.</p>
 
@@ -49,7 +51,90 @@ export function Applications() {
       </div>
 
       {showForm && <RegisterForm onClose={() => setShowForm(false)} />}
+      {showTarget && <ScanTargetForm onClose={() => setShowTarget(false)} />}
     </>
+  );
+}
+
+function ScanTargetForm({ onClose }: { onClose: () => void }) {
+  const qc = useQueryClient();
+  const navigate = useNavigate();
+  const [f, setF] = useState({
+    name: "", host: "", port: "5432", database: "", username: "", password: "",
+    environment: "prod", presence_only: true,
+  });
+  const set = (k: string, v: unknown) => setF((s) => ({ ...s, [k]: v }));
+
+  const mutation = useMutation({
+    mutationFn: () =>
+      api.registerScanTarget({
+        name: f.name.trim(),
+        environment: f.environment,
+        kind: "postgres",
+        host: f.host.trim(),
+        port: Number(f.port) || 5432,
+        database: f.database.trim(),
+        username: f.username.trim(),
+        password: f.password,
+        presence_only: f.presence_only,
+      }),
+    onSuccess: (r) => {
+      qc.invalidateQueries({ queryKey: ["applications"] });
+      qc.invalidateQueries({ queryKey: ["portfolio"] });
+      onClose();
+      navigate(`/applications/${r.application_id}`);
+    },
+  });
+
+  const ready = f.name.trim() && f.host.trim() && f.database.trim() && f.username.trim() && f.password;
+
+  return (
+    <div className="scrim" onClick={onClose}>
+      <div className="modal" onClick={(e) => e.stopPropagation()}>
+        <h2>Register scan target</h2>
+        <p className="muted" style={{ marginTop: 0 }}>
+          PrivacyMon connects with a read-only account to detect which fields hold personal
+          data (PAN, Voter ID, DOB, mobile, …). With presence-only on, no value — not even a
+          masked fragment — leaves the target.
+        </p>
+        <label>Application name</label>
+        <input value={f.name} onChange={(e) => set("name", e.target.value)} placeholder="HR Portal" />
+        <div className="row">
+          <div style={{ flex: 2 }}>
+            <label>Host / IP address</label>
+            <input className="mono" value={f.host} onChange={(e) => set("host", e.target.value)} placeholder="10.0.2.15" />
+          </div>
+          <div style={{ flex: 1 }}>
+            <label>Port</label>
+            <input className="mono" value={f.port} onChange={(e) => set("port", e.target.value)} />
+          </div>
+        </div>
+        <label>Database</label>
+        <input className="mono" value={f.database} onChange={(e) => set("database", e.target.value)} placeholder="appdb" />
+        <div className="row">
+          <div style={{ flex: 1 }}>
+            <label>Read-only username</label>
+            <input className="mono" value={f.username} onChange={(e) => set("username", e.target.value)} />
+          </div>
+          <div style={{ flex: 1 }}>
+            <label>Read-only password</label>
+            <input className="mono" type="password" value={f.password} onChange={(e) => set("password", e.target.value)} />
+          </div>
+        </div>
+        <label style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 12 }}>
+          <input type="checkbox" style={{ width: "auto" }} checked={f.presence_only}
+            onChange={(e) => set("presence_only", e.target.checked)} />
+          Presence-only (record fields detected, never any value)
+        </label>
+        {mutation.isError && <p style={{ color: "var(--crit)" }}>{(mutation.error as Error).message}</p>}
+        <div className="row" style={{ marginTop: 18, justifyContent: "flex-end" }}>
+          <button onClick={onClose}>Cancel</button>
+          <button className="primary" disabled={!ready || mutation.isPending} onClick={() => mutation.mutate()}>
+            {mutation.isPending ? "Registering…" : "Register target"}
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 

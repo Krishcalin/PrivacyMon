@@ -119,6 +119,14 @@ export const api = {
     http<DataSource>(`/applications/${id}/data-sources`, {
       method: "POST", body: JSON.stringify(body),
     }),
+  registerScanTarget: (body: unknown) =>
+    http<{ application_id: string; data_source_id: string }>("/scan-targets", {
+      method: "POST", body: JSON.stringify(body),
+    }),
+  testDataSource: (dataSourceId: string) =>
+    http<{ ok: boolean; detail: string }>(`/data-sources/${dataSourceId}/test`, {
+      method: "POST",
+    }),
   findings: (id: string, qs = "") =>
     http<{ total: number; findings: Finding[] }>(`/applications/${id}/findings${qs}`),
   inventory: (id: string) =>

@@ -99,6 +99,17 @@ heart of Discovery core and DPIA workflow — plus a minimal Foundation API.
    parameters per processing activity; `api/app/dpia.py` is the CRUD; the console
    screen `/applications/:id/dpia` captures them in a grouped form. These are recorded
    per in-scope application alongside the scan-discovered inventory.
+8. **DONE — admin registers and scans a target application with read-only
+   credentials.** The admin opens the console, clicks **Register scan target**, and
+   gives the application name, host/IP, port, database, read-only username and
+   password. The password is encrypted at rest with AES-256-GCM (`platform_db/crypto.py`,
+   the SRS 7.1 v1 vault default; master key from `PRIVACYMON_MASTER_KEY`) and stored as
+   the data source's `credential_ref` — never in clear, never returned. A **Test**
+   button opens a read-only connection; **Scan** runs the worker, which decrypts the
+   credential transiently, connects read-only, and in **presence-only** mode records
+   which columns hold which PII category (PAN, Voter ID, DOB, mobile, …) with no value —
+   not even a masked fragment — leaving the target. Endpoints `POST /scan-targets`,
+   `POST /data-sources/{id}/test`; connector flag `presence_only`.
 6. ~~docker-compose dev stack wired end to end with a seeded sample target DB.~~
    **DONE** — `infra/api.Dockerfile` + `infra/worker.Dockerfile` + `infra/.env(.example)`;
    `docker compose -f infra/docker-compose.yml --profile full up` brings up Postgres,
