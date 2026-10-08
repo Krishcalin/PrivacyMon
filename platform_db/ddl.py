@@ -25,6 +25,7 @@ RLS_TABLES: dict[str, str] = {
     "dpia_comments": "application_id",
     "risks": "application_id",
     "dpia_transitions": "application_id",
+    "dpia_records": "application_id",
 }
 
 
@@ -38,28 +39,38 @@ def _predicate(key: str) -> str:
     )
 
 
+def rls_up_table(table: str, key: str) -> list[str]:
+    """Enable + FORCE RLS and install the application-isolation policy on one table.
+    FORCE so the policy applies even to the table owner — the whole point of 8.5 is
+    that a leak survives neither an API bug nor a privileged role."""
+    pred = _predicate(key)
+    return [
+        f"ALTER TABLE {table} ENABLE ROW LEVEL SECURITY",
+        f"ALTER TABLE {table} FORCE ROW LEVEL SECURITY",
+        f"CREATE POLICY {table}_app_isolation ON {table}\n"
+        f"    USING ({pred})\n"
+        f"    WITH CHECK ({pred})",
+    ]
+
+
+def rls_down_table(table: str) -> list[str]:
+    return [
+        f"DROP POLICY IF EXISTS {table}_app_isolation ON {table}",
+        f"ALTER TABLE {table} DISABLE ROW LEVEL SECURITY",
+    ]
+
+
 def rls_up() -> list[str]:
-    """Enable + FORCE RLS and install the application-isolation policy on every
-    scoped table. FORCE so the policy applies even to the table owner — the whole
-    point of 8.5 is that a leak survives neither an API bug nor a privileged role."""
     out: list[str] = []
     for table, key in RLS_TABLES.items():
-        pred = _predicate(key)
-        out.append(f"ALTER TABLE {table} ENABLE ROW LEVEL SECURITY")
-        out.append(f"ALTER TABLE {table} FORCE ROW LEVEL SECURITY")
-        out.append(
-            f"CREATE POLICY {table}_app_isolation ON {table}\n"
-            f"    USING ({pred})\n"
-            f"    WITH CHECK ({pred})"
-        )
+        out.extend(rls_up_table(table, key))
     return out
 
 
 def rls_down() -> list[str]:
     out: list[str] = []
     for table in RLS_TABLES:
-        out.append(f"DROP POLICY IF EXISTS {table}_app_isolation ON {table}")
-        out.append(f"ALTER TABLE {table} DISABLE ROW LEVEL SECURITY")
+        out.extend(rls_down_table(table))
     return out
 
 

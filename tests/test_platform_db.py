@@ -26,7 +26,7 @@ EXPECTED_TABLES = {
     "findings", "suppressions", "inventory",
     "questionnaire_templates", "dpia_assessments",               # assessment
     "questionnaire_responses", "dpia_comments", "controls",
-    "risks", "dpia_transitions",
+    "risks", "dpia_transitions", "dpia_records",
     "users", "user_roles", "api_tokens", "audit_log",            # platform
     "webhooks", "settings",
 }
@@ -100,7 +100,7 @@ def test_rls_covers_exactly_the_scoped_tables():
     assert set(ddl.RLS_TABLES) == {
         "applications", "data_sources", "findings", "inventory",
         "dpia_assessments", "questionnaire_responses", "dpia_comments",
-        "risks", "dpia_transitions",
+        "risks", "dpia_transitions", "dpia_records",
     }
     # applications is keyed on its own id; the rest on application_id.
     assert ddl.RLS_TABLES["applications"] == "id"

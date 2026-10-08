@@ -15,7 +15,7 @@ from dpia_core.controls import CONTROL_LIBRARY, QUESTIONNAIRE
 from dpia_core.detectors import DEFAULT_PACK_VERSION, default_detectors
 from dpia_core.engine import evaluate_column, visible_findings
 
-from . import console, db, scans
+from . import console, db, dpia, scans
 from .settings import settings
 
 app = FastAPI(
@@ -31,6 +31,8 @@ P = settings.api_prefix
 app.include_router(scans.router)
 # Console-backing endpoints (SRS 9/10): registry, findings, inventory, dashboard.
 app.include_router(console.router)
+# DPIA processing-record endpoints (the 30-field DPDP sheet).
+app.include_router(dpia.router)
 
 
 @app.get(f"{P}/healthz")

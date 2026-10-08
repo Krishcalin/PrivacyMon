@@ -96,6 +96,16 @@ export interface ScanJob {
   findings_count: number;
 }
 
+// The 30-field DPDP processing/DPIA record. Two fields are booleans; the rest are
+// optional text. Indexed access keeps the form generic over the field config.
+export interface DpiaRecord {
+  id: string;
+  application_id: string;
+  sensitive_high_risk: boolean;
+  dpa_signed: boolean;
+  [field: string]: string | boolean | null;
+}
+
 // ── endpoints ─────────────────────────────────────────────────────────────────
 export const api = {
   portfolio: () => http<Portfolio>("/dashboard/portfolio"),
@@ -118,4 +128,16 @@ export const api = {
       method: "POST",
     }),
   scan: (jobId: string) => http<ScanJob>(`/scans/${jobId}`),
+  dpiaRecords: (id: string) =>
+    http<{ records: DpiaRecord[] }>(`/applications/${id}/dpia-records`),
+  createDpiaRecord: (id: string, body: unknown) =>
+    http<DpiaRecord>(`/applications/${id}/dpia-records`, {
+      method: "POST", body: JSON.stringify(body),
+    }),
+  updateDpiaRecord: (recordId: string, body: unknown) =>
+    http<DpiaRecord>(`/dpia-records/${recordId}`, {
+      method: "PUT", body: JSON.stringify(body),
+    }),
+  deleteDpiaRecord: (recordId: string) =>
+    http<void>(`/dpia-records/${recordId}`, { method: "DELETE" }),
 };

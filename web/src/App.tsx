@@ -3,6 +3,7 @@ import { Dashboard } from "./features/Dashboard";
 import { Applications } from "./features/Applications";
 import { ApplicationOverview } from "./features/ApplicationOverview";
 import { Findings } from "./features/Findings";
+import { DpiaRecords } from "./features/DpiaRecords";
 
 function Sidebar() {
   return (
@@ -30,6 +31,7 @@ export function App() {
           <Route path="/applications" element={<Applications />} />
           <Route path="/applications/:id" element={<ApplicationOverview />} />
           <Route path="/applications/:id/findings" element={<Findings />} />
+          <Route path="/applications/:id/dpia" element={<DpiaRecords />} />
         </Routes>
       </main>
     </div>

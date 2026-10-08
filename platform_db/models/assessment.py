@@ -171,3 +171,57 @@ class DpiaTransition(UUIDPKMixin, Base):
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
     at: Mapped[DateTime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class DpiaRecord(UUIDPKMixin, TimestampMixin, Base):
+    """The 30-field DPDP processing/DPIA record captured per application (the
+    "DPIA Fields" sheet). An application may carry several — one per processing
+    activity / inventory entry, keyed by ``inventory_id``. Most fields are free text;
+    only the unambiguous yes/no ones are booleans. Carries ``application_id`` for the
+    uniform application-scoped RLS policy (SRS 8.5)."""
+
+    __tablename__ = "dpia_records"
+    __table_args__ = (Index("ix_dpia_records_application_id", "application_id"),)
+
+    application_id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("applications.id", ondelete="CASCADE"),
+        nullable=False)
+
+    # 1-5 identification + data
+    inventory_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    business_function: Mapped[str | None] = mapped_column(Text, nullable=True)
+    data_principal_type: Mapped[str | None] = mapped_column(Text, nullable=True)
+    data_category: Mapped[str | None] = mapped_column(Text, nullable=True)
+    data_elements: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # 6
+    sensitive_high_risk: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # 7-10
+    purpose_of_processing: Mapped[str | None] = mapped_column(Text, nullable=True)
+    legal_basis: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source_system: Mapped[str | None] = mapped_column(Text, nullable=True)
+    target_systems: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # 11-13
+    retention_period: Mapped[str | None] = mapped_column(Text, nullable=True)
+    deletion_trigger: Mapped[str | None] = mapped_column(Text, nullable=True)
+    data_owner: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # 14
+    processor_involved: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # 15-19
+    encryption_status: Mapped[str | None] = mapped_column(Text, nullable=True)
+    hosting_location: Mapped[str | None] = mapped_column(Text, nullable=True)
+    log_retention: Mapped[str | None] = mapped_column(Text, nullable=True)
+    technical_safeguards: Mapped[str | None] = mapped_column(Text, nullable=True)
+    organizational_safeguards: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # 20-23
+    dpa_signed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    security_certifications: Mapped[str | None] = mapped_column(Text, nullable=True)
+    breach_sla: Mapped[str | None] = mapped_column(Text, nullable=True)
+    audit_rights: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # 24-30
+    consent_withdrawal_mode: Mapped[str | None] = mapped_column(Text, nullable=True)
+    dpo_approval: Mapped[str | None] = mapped_column(Text, nullable=True)
+    data_principal_rights: Mapped[str | None] = mapped_column(Text, nullable=True)
+    children_data_protection: Mapped[str | None] = mapped_column(Text, nullable=True)
+    grievance_redressal: Mapped[str | None] = mapped_column(Text, nullable=True)
+    cross_border_transfers: Mapped[str | None] = mapped_column(Text, nullable=True)
+    tracking_cookies: Mapped[str | None] = mapped_column(Text, nullable=True)

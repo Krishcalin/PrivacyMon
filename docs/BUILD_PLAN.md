@@ -94,6 +94,11 @@ heart of Discovery core and DPIA workflow — plus a minimal Foundation API.
    `api/app/console.py` (register/list applications, add/list data sources, findings,
    inventory, portfolio aggregate). The SRS's shadcn/Recharts/OIDC polish and the
    remaining §10 screens (DPIA workspace, risk register, reports, admin) are later work.
+7. **DONE — DPIA processing records (the 30-field "DPIA Fields" sheet).** A new
+   `dpia_records` table (migration `0002`, application-scoped RLS) holds the 30 DPDP
+   parameters per processing activity; `api/app/dpia.py` is the CRUD; the console
+   screen `/applications/:id/dpia` captures them in a grouped form. These are recorded
+   per in-scope application alongside the scan-discovered inventory.
 6. ~~docker-compose dev stack wired end to end with a seeded sample target DB.~~
    **DONE** — `infra/api.Dockerfile` + `infra/worker.Dockerfile` + `infra/.env(.example)`;
    `docker compose -f infra/docker-compose.yml --profile full up` brings up Postgres,
